@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.deltakinetics.keepintouch.crmsync</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/apple2/keepintouch-crm/sync-agent/crm_sync_agent.py</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>CRM_URL</key>
+        <string>https://your-app.railway.app</string>
+        <key>CRM_API_KEY</key>
+        <string>kit-dev-key-change-me</string>
+    </dict>
+    <key>StartInterval</key>
+    <integer>1800</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/apple2/.keepintouch/crm_sync_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/apple2/.keepintouch/crm_sync_stderr.log</string>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
