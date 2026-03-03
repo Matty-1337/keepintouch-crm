@@ -216,7 +216,11 @@ def pull_from_crm(since: str | None = None) -> list[dict]:
     try:
         resp = requests.get(url, headers=HEADERS, params=params, timeout=30)
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        # API returns {"contacts": [...]} or a plain list
+        if isinstance(data, dict) and "contacts" in data:
+            return data["contacts"]
+        return data if isinstance(data, list) else []
     except requests.RequestException as e:
         log(f"  Pull failed: {e}")
         return []
