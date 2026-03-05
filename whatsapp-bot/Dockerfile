@@ -2,19 +2,17 @@ FROM node:20-slim
 
 WORKDIR /app
 
-# Install dependencies
+# Install dependencies (production only)
 COPY package.json package-lock.json ./
-RUN npm ci --production=false
+RUN npm ci --omit=dev
 
-# Copy source
+# Copy source and build
 COPY tsconfig.json ./
 COPY src/ ./src/
-
-# Build
 RUN npx tsc
 
-# Create data directory
+# Create persistent directories
 RUN mkdir -p data auth_info
 
-# Run
+# Entrypoint
 CMD ["node", "dist/index.js"]

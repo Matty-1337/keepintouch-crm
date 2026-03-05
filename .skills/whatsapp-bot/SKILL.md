@@ -22,60 +22,90 @@ WhatsApp (Baileys) → Scanner → Extractor (AI) → Router (Supabase) → Noti
 
 | File | Purpose |
 |------|---------|
-| `src/index.ts` | Entry point — wires connection, cron scheduler, message listeners, commands |
-| `src/connection.ts` | Baileys WebSocket connection, QR auth, auto-reconnect, chat listing |
+| `src/index.ts` | Entry point — wires connection, cron, message listeners, graceful shutdown, heartbeat |
+| `src/connection.ts` | Baileys v7 connection, QR + pairing code auth, auto-reconnect with exponential backoff |
 | `src/config.ts` | Environment config loader from `.env` |
 | `src/types.ts` | TypeScript interfaces: BotConfig, StoredMessage, ExtractedItem, ScanResult, ConversationInfo |
-| `src/storage.ts` | SQLite layer — messages, extracted_items, scan_log tables |
-| `src/scanner.ts` | Scans monitored chats, triggers extraction on unprocessed messages |
+| `src/storage.ts` | SQLite layer — messages, extracted_items, scan_log tables + filtered queries |
+| `src/scanner.ts` | Scans monitored chats with optional overrides (target chat, lookback hours) |
 | `src/extractor.ts` | AI-powered extraction via OpenRouter (primary) / Anthropic (fallback) |
 | `src/router.ts` | Routes extracted items to Supabase (haily_directives table) |
 | `src/notifier.ts` | Sends WhatsApp digest notifications to Haily, grouped by priority |
-| `src/commands.ts` | Bot commands: !help, !chats, !scan, !status, !route, !notify, !recent, !config |
-| `src/list-chats.ts` | Standalone script to list all WhatsApp conversations with JIDs |
+| `src/commands.ts` | Enhanced bot commands with argument parsing, chat name resolution, rich formatting |
 
-## Key Concepts
+## Bot Commands
 
-### Connection & Auth
+Commands are authorized — only Haily, Matty, or the bot's own account can trigger them.
+
+### `!scan` — Scan with targeting and lookback
+```
+!scan                    → Scan all monitored chats, default lookback
+!scan 72h                → Scan all, 72-hour lookback
+!scan Sculpture          → Scan only Sculpture Team group
+!scan Finance 48h        → Scan Finance Team, 48-hour lookback
+```
+Returns rich formatted results inline with priority grouping and item details.
+
+### `!recent` — Filtered item history
+```
+!recent                  → Last 50 items from all chats
+!recent 20               → Last 20 items
+!recent Finance          → Items from Finance group (last 7 days)
+!recent 72h              → Items from last 72 hours
+!recent Finance high     → High-priority items from Finance
+```
+
+### `!digest` — On-demand digest (same format Haily receives)
+```
+!digest                  → Today's digest (last 24h)
+!digest 72h              → Digest covering last 72 hours
+!digest Sculpture        → Digest for Sculpture group only
+```
+
+### Other commands
+- `!help` — list commands with examples
+- `!chats` — list all conversations with JIDs (✅ marks monitored ones)
+- `!status` — pending items, recent scans
+- `!route` — manually route pending items to Project Ops
+- `!notify` — manually send pending notifications to Haily
+- `!config` — show configuration with monitored chat names
+
+## Connection & Auth
+
 - Uses `@whiskeysockets/baileys` v7 for WhatsApp Web protocol
 - Auth persisted in `auth_info/` via `useMultiFileAuthState`
-- `syncFullHistory: true` — pulls full conversation history on first connect
-- QR code printed to terminal + quickchart.io URL for headless environments
-- Auto-reconnect with exponential backoff (max 10 attempts)
+- `syncFullHistory: true` — pulls full conversation history
+- **QR mode** (local): QR printed to terminal + quickchart.io URL
+- **Pairing code mode** (Railway): Set `USE_PAIRING_CODE=true` + `PAIRING_PHONE_NUMBER` — generates numeric code for WhatsApp > Linked Devices
+- Auto-reconnect with exponential backoff (1s → 60s max, 20 attempts, then 5-min cooldown)
+- Logged-out detection with re-auth instructions
+- 5-minute disconnect warning logged
 
-### Scan Pipeline
-1. **Cron trigger** every `SCAN_INTERVAL_MINUTES` (default: 30)
-2. **Scanner** pulls unprocessed messages from SQLite for each monitored chat
-3. **Extractor** sends message batch to AI with structured prompt, parses JSON response
-4. **Deduplication** — `isDuplicateItem()` checks title similarity within 48h window
-5. **Router** inserts into Supabase `haily_directives` table with correct profile UUIDs
-6. **Notifier** sends WhatsApp message to Haily with priority-grouped digest
+## Railway Deployment
 
-### Project Ops Integration (Supabase Direct)
-- Inserts into `haily_directives` table (serves as both task and directive)
-- Profile UUIDs:
-  - Haily Rodriguez (EA): `754954b4-2c7c-4c14-86ee-f81943098f26`
-  - Matt (CEO): `6d8b760d-af8a-4755-8236-9cf364264498`
-- Priority mapping: high→High, medium→Normal, low→Low
-- Category mapping: task/action_item→General, follow_up→Follow-Up, reminder→Administrative
+### Service Configuration
+- Separate Railway service in the `keepintouch-crm` project
+- Root directory: `whatsapp-bot/`
+- Uses `Dockerfile` with `npm ci --omit=dev` for lean production build
+- `railway.json` configures ALWAYS restart policy
 
-### AI Extraction
-- Primary: OpenRouter (`glm-4.7` default, `deepseek/deepseek-chat-v3.2` fallback)
-- Secondary fallback: Anthropic (`claude-haiku-4-5-20251001`)
-- Temperature: 0.1 for consistent structured output
-- Response format: JSON array of ExtractedItem objects
-- Handles markdown code fences in AI responses
+### Volume Mounts (CRITICAL)
+```
+/app/auth_info → WhatsApp session credentials (persist across deploys)
+/app/data      → SQLite database (messages, items, scan logs)
+```
 
-### Bot Commands
-Commands are authorized — only Haily or the bot's own account can trigger them:
-- `!help` — list commands
-- `!chats` — list all synced conversations with JIDs
-- `!scan` — trigger immediate scan
-- `!status` — show pending items, recent scans
-- `!route` — manually route pending items to Project Ops
-- `!notify` — manually send pending notifications
-- `!recent` — show recently extracted items
-- `!config` — show current configuration
+### First Deploy Auth
+1. Set `USE_PAIRING_CODE=true` and `PAIRING_PHONE_NUMBER=18323981541`
+2. Deploy, check Railway logs for the pairing code
+3. Enter code in WhatsApp > Linked Devices > Link with phone number
+4. Credentials auto-persist in volume mount
+
+### Graceful Shutdown (SIGTERM)
+On deploy/restart: stops cron → closes Baileys socket → closes SQLite → exits cleanly.
+
+### Heartbeat
+Logs RSS/heap memory every 5 minutes for Railway health monitoring.
 
 ## Environment Variables
 
@@ -88,8 +118,19 @@ Commands are authorized — only Haily or the bot's own account can trigger them
 | SUPABASE_SERVICE_KEY | Yes | — | Supabase service role key |
 | SCAN_INTERVAL_MINUTES | No | 30 | Cron interval for scanning |
 | SCAN_LOOKBACK_HOURS | No | 24 | How far back to scan |
+| USE_PAIRING_CODE | No | false | Use pairing code instead of QR (for Railway) |
+| PAIRING_PHONE_NUMBER | No | — | Phone number for pairing code (digits + country code) |
 
 *Either OPENROUTER_API_KEY or ANTHROPIC_API_KEY required.
+
+## Project Ops Integration (Supabase Direct)
+
+- Inserts into `haily_directives` table
+- Profile UUIDs:
+  - Haily Rodriguez (EA): `754954b4-2c7c-4c14-86ee-f81943098f26`
+  - Matt (CEO): `6d8b760d-af8a-4755-8236-9cf364264498`
+- Priority mapping: high→High, medium→Normal, low→Low
+- Category mapping: task/action_item→General, follow_up→Follow-Up, reminder→Administrative
 
 ## Running
 
@@ -97,26 +138,9 @@ Commands are authorized — only Haily or the bot's own account can trigger them
 # Development
 cd whatsapp-bot && npx tsx src/index.ts
 
-# List conversations
-npx tsx src/list-chats.ts
-
 # Production (compiled)
 npx tsc && node dist/index.js
 
 # Docker
 docker build -t kit-whatsapp-bot . && docker run -v ./auth_info:/app/auth_info -v ./data:/app/data --env-file .env kit-whatsapp-bot
 ```
-
-## SQLite Schema
-
-Three tables in `data/whatsapp-bot.db`:
-- **messages** — raw message cache (id, chat_jid, sender, content, timestamp, processed flag)
-- **extracted_items** — AI-extracted items (type, title, priority, routed/notified flags)
-- **scan_log** — scan history (messages_scanned, items_extracted, status)
-
-## Debugging
-
-- Set `LOG_LEVEL=warn` or `LOG_LEVEL=debug` in .env for Baileys logging
-- Check `data/whatsapp-bot.db` with `sqlite3` for stored messages/items
-- Run `!status` in WhatsApp to see pending items and recent scan results
-- If connection drops, check `auth_info/` — delete and re-scan QR if corrupted

@@ -181,6 +181,44 @@ export function getRecentExtractedItems(limit: number = 10): any[] {
   `).all(limit)
 }
 
+export interface ItemFilter {
+  chatJid?: string
+  hoursBack?: number
+  priority?: string
+  limit?: number
+}
+
+export function getFilteredItems(filter: ItemFilter): any[] {
+  const d = getDb()
+  const conditions: string[] = []
+  const params: any[] = []
+
+  if (filter.chatJid) {
+    conditions.push('chat_jid = ?')
+    params.push(filter.chatJid)
+  }
+
+  if (filter.hoursBack) {
+    const cutoff = new Date(Date.now() - filter.hoursBack * 60 * 60 * 1000).toISOString()
+    conditions.push('created_at >= ?')
+    params.push(cutoff)
+  }
+
+  if (filter.priority) {
+    conditions.push('LOWER(priority) = LOWER(?)')
+    params.push(filter.priority)
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+  const limit = filter.limit || 50
+
+  return d.prepare(`
+    SELECT * FROM extracted_items ${where}
+    ORDER BY CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, id DESC
+    LIMIT ?
+  `).all(...params, limit)
+}
+
 export function closeDb(): void {
   if (db) {
     db.close()

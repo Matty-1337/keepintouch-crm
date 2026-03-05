@@ -1,4 +1,3 @@
-import { getSocket } from './connection'
 import { loadConfig } from './config'
 import {
   storeMessage,
@@ -7,21 +6,26 @@ import {
   logScan,
 } from './storage'
 import { extractItems } from './extractor'
-import type { StoredMessage, ScanResult } from './types'
+import type { ScanResult } from './types'
 
-export async function scanMonitoredChats(): Promise<ScanResult[]> {
+export async function scanMonitoredChats(overrides?: {
+  chatJids?: string[]
+  lookbackHours?: number
+}): Promise<ScanResult[]> {
   const config = loadConfig()
+  const chatJids = overrides?.chatJids || config.monitoredChats
+  const lookbackHours = overrides?.lookbackHours || config.scanLookbackHours
   const results: ScanResult[] = []
 
-  if (config.monitoredChats.length === 0) {
-    console.log('[Scanner] No monitored chats configured. Skipping scan.')
+  if (chatJids.length === 0) {
+    console.log('[Scanner] No chats to scan.')
     return results
   }
 
-  console.log(`[Scanner] Starting scan of ${config.monitoredChats.length} chat(s)...`)
+  console.log(`[Scanner] Scanning ${chatJids.length} chat(s), lookback ${lookbackHours}h...`)
 
-  for (const chatJid of config.monitoredChats) {
-    const result = await scanChat(chatJid, config.scanLookbackHours)
+  for (const chatJid of chatJids) {
+    const result = await scanChat(chatJid, lookbackHours)
     results.push(result)
     logScan(result)
   }
@@ -37,7 +41,6 @@ async function scanChat(chatJid: string, lookbackHours: number): Promise<ScanRes
   const sinceTimestamp = Math.floor((Date.now() - lookbackHours * 60 * 60 * 1000) / 1000)
 
   try {
-    // Get unprocessed messages from local DB
     const messages = getUnprocessedMessages(chatJid, sinceTimestamp)
 
     if (messages.length === 0) {
@@ -54,10 +57,8 @@ async function scanChat(chatJid: string, lookbackHours: number): Promise<ScanRes
 
     console.log(`[Scanner] ${chatJid}: Processing ${messages.length} message(s)...`)
 
-    // Extract action items using AI
     const items = await extractItems(messages, chatJid)
 
-    // Mark messages as processed
     const messageIds = messages.map((m) => m.id)
     markMessagesProcessed(messageIds)
 

@@ -3,7 +3,6 @@ import makeWASocket, {
   DisconnectReason,
   Browsers,
   WASocket,
-  BaileysEventMap,
   fetchLatestBaileysVersion,
 } from '@whiskeysockets/baileys'
 import { Boom } from '@hapi/boom'
@@ -17,7 +16,15 @@ const logger = pino({ level: process.env.LOG_LEVEL || 'silent' })
 
 let sock: WASocket | null = null
 let reconnectAttempts = 0
-const MAX_RECONNECT_ATTEMPTS = 10
+let lastConnectedAt: number | null = null
+let disconnectedSince: number | null = null
+
+const MAX_RECONNECT_ATTEMPTS = 20
+const MAX_BACKOFF_MS = 60000
+
+export function getUptime(): number {
+  return lastConnectedAt ? Math.floor((Date.now() - lastConnectedAt) / 1000) : 0
+}
 
 export async function connectToWhatsApp(): Promise<WASocket> {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
@@ -35,10 +42,29 @@ export async function connectToWhatsApp(): Promise<WASocket> {
 
   sock.ev.on('creds.update', saveCreds)
 
+  // Pairing code support for headless (Railway)
+  const usePairingCode = process.env.USE_PAIRING_CODE === 'true'
+  const pairingPhone = process.env.PAIRING_PHONE_NUMBER
+
+  if (usePairingCode && pairingPhone && !state.creds.registered) {
+    // Wait for socket to be ready before requesting pairing code
+    setTimeout(async () => {
+      try {
+        const code = await sock!.requestPairingCode(pairingPhone)
+        console.log(`\n========================================`)
+        console.log(`PAIRING CODE: ${code}`)
+        console.log(`Enter this code in WhatsApp > Linked Devices > Link with phone number`)
+        console.log(`========================================\n`)
+      } catch (err) {
+        console.error('Failed to request pairing code:', err)
+      }
+    }, 3000)
+  }
+
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update
 
-    if (qr) {
+    if (qr && !usePairingCode) {
       console.log('\n=== SCAN THIS QR CODE WITH WHATSAPP ===\n')
       qrcode.generate(qr, { small: true })
 
@@ -51,22 +77,40 @@ export async function connectToWhatsApp(): Promise<WASocket> {
 
     if (connection === 'close') {
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode
-      const shouldReconnect = statusCode !== DisconnectReason.loggedOut
+      disconnectedSince = disconnectedSince || Date.now()
 
-      console.log(
-        `Connection closed. Status: ${statusCode}. ${shouldReconnect ? 'Reconnecting...' : 'Logged out — not reconnecting.'}`
-      )
+      if (statusCode === DisconnectReason.loggedOut) {
+        console.error(
+          '\n[CONNECTION] ❌ WhatsApp session LOGGED OUT.\n' +
+          'To re-authenticate:\n' +
+          '  1. Delete auth_info/ directory\n' +
+          '  2. Restart the bot\n' +
+          '  3. Scan the new QR code or use pairing code\n'
+        )
+        return
+      }
 
-      if (shouldReconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      const disconnectedMs = Date.now() - disconnectedSince
+      if (disconnectedMs > 5 * 60 * 1000) {
+        console.warn(`[CONNECTION] ⚠️ Disconnected for ${Math.floor(disconnectedMs / 60000)} minutes.`)
+      }
+
+      if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
         reconnectAttempts++
-        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 30000)
-        console.log(`Reconnect attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} in ${delay / 1000}s...`)
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), MAX_BACKOFF_MS)
+        console.log(`[CONNECTION] Reconnect ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} in ${(delay / 1000).toFixed(0)}s (status: ${statusCode})`)
         setTimeout(() => connectToWhatsApp(), delay)
-      } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        console.error('Max reconnect attempts reached. Please restart the bot.')
+      } else {
+        console.error('[CONNECTION] Max reconnect attempts reached. Waiting 5 minutes before resetting counter...')
+        setTimeout(() => {
+          reconnectAttempts = 0
+          connectToWhatsApp()
+        }, 5 * 60 * 1000)
       }
     } else if (connection === 'open') {
       reconnectAttempts = 0
+      disconnectedSince = null
+      lastConnectedAt = lastConnectedAt || Date.now()
       console.log('WhatsApp connection established successfully.')
     }
   })
@@ -78,51 +122,13 @@ export function getSocket(): WASocket | null {
   return sock
 }
 
-export async function listConversations(): Promise<ConversationInfo[]> {
-  if (!sock) throw new Error('Not connected to WhatsApp')
-
-  const conversations: ConversationInfo[] = []
-  const chats = await getChatList()
-
-  for (const chat of chats) {
-    const isGroup = chat.id.endsWith('@g.us')
-    let name = chat.name || null
-
-    if (!isGroup && !name) {
-      name = chat.id.replace('@s.whatsapp.net', '')
-    }
-
-    conversations.push({
-      jid: chat.id,
-      name,
-      lastMessageTimestamp: chat.conversationTimestamp
-        ? typeof chat.conversationTimestamp === 'number'
-          ? chat.conversationTimestamp
-          : chat.conversationTimestamp.low
-        : null,
-      isGroup,
-      participantCount: isGroup ? chat.participants?.length : undefined,
-    })
+export async function closeSocket(): Promise<void> {
+  if (sock) {
+    try {
+      sock.end(undefined)
+    } catch {}
+    sock = null
   }
-
-  conversations.sort((a, b) => (b.lastMessageTimestamp || 0) - (a.lastMessageTimestamp || 0))
-
-  return conversations
-}
-
-async function getChatList(): Promise<any[]> {
-  if (!sock) return []
-
-  return new Promise((resolve) => {
-    const collected: any[] = []
-    const timeout = setTimeout(() => resolve(collected), 5000)
-
-    sock!.ev.on('messaging-history.set', ({ chats: syncedChats }) => {
-      collected.push(...syncedChats)
-      clearTimeout(timeout)
-      setTimeout(() => resolve(collected), 2000)
-    })
-  })
 }
 
 export function onNewMessage(callback: (msg: any) => void): void {

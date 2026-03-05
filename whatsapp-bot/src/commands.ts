@@ -2,6 +2,7 @@ import { getSocket } from './connection'
 import { loadConfig } from './config'
 import {
   getRecentExtractedItems,
+  getFilteredItems,
   getLastScanSummary,
   getUnroutedItems,
   getUnnotifiedItems,
@@ -12,14 +13,33 @@ import { routeToProjectOps } from './router'
 import { notifyHaley, sendDirectMessage } from './notifier'
 import type { ConversationInfo } from './types'
 
+// Chat name cache — populated from groupFetchAllParticipating
+const chatNameCache = new Map<string, string>()
+
+export async function populateChatNames(): Promise<void> {
+  const sock = getSocket()
+  if (!sock) return
+  try {
+    const groups = await sock.groupFetchAllParticipating()
+    for (const g of Object.values(groups)) {
+      chatNameCache.set(g.id, g.subject)
+    }
+  } catch {}
+}
+
+function getChatName(jid: string): string {
+  return chatNameCache.get(jid) || jid.split('@')[0]
+}
+
 const COMMANDS: Record<string, string> = {
   '!help': 'Show available commands',
   '!chats': 'List all synced conversations with JIDs',
   '!status': 'Show bot status and pending items',
-  '!scan': 'Trigger an immediate scan of monitored chats',
+  '!scan': 'Scan chats — !scan [name] [Nh]',
   '!route': 'Route pending items to Project Ops',
-  '!notify': 'Send pending notifications to Haley',
-  '!recent': 'Show recently extracted items',
+  '!notify': 'Send pending notifications to Haily',
+  '!recent': 'Recent items — !recent [name] [Nh] [high/med/low] [count]',
+  '!digest': 'Get digest — !digest [name] [Nh]',
   '!config': 'Show current bot configuration',
 }
 
@@ -30,45 +50,30 @@ export async function handleCommand(
 ): Promise<void> {
   const config = loadConfig()
 
-  // Only respond to commands from Haley or from self
   const isAuthorized =
     senderJid === config.haleyWhatsAppJid ||
     chatJid === config.haleyWhatsAppJid
 
-  // Also allow commands sent by the bot's own account
   const sock = getSocket()
   const myJid = sock?.user?.id
   const isFromMe = myJid && (senderJid === myJid || senderJid?.includes(myJid.split(':')[0]))
 
   if (!isAuthorized && !isFromMe) return
 
-  const cmd = command.trim().toLowerCase().split(' ')[0]
+  const parts = command.trim().split(/\s+/)
+  const cmd = parts[0].toLowerCase()
+  const args = parts.slice(1)
 
   switch (cmd) {
-    case '!help':
-      await replyHelp(chatJid)
-      break
-    case '!chats':
-      await replyChats(chatJid)
-      break
-    case '!status':
-      await replyStatus(chatJid)
-      break
-    case '!scan':
-      await replyScan(chatJid)
-      break
-    case '!route':
-      await replyRoute(chatJid)
-      break
-    case '!notify':
-      await replyNotify(chatJid)
-      break
-    case '!recent':
-      await replyRecent(chatJid)
-      break
-    case '!config':
-      await replyConfig(chatJid)
-      break
+    case '!help': await replyHelp(chatJid); break
+    case '!chats': await replyChats(chatJid); break
+    case '!status': await replyStatus(chatJid); break
+    case '!scan': await replyScan(chatJid, args); break
+    case '!route': await replyRoute(chatJid); break
+    case '!notify': await replyNotify(chatJid); break
+    case '!recent': await replyRecent(chatJid, args); break
+    case '!digest': await replyDigest(chatJid, args); break
+    case '!config': await replyConfig(chatJid); break
   }
 }
 
@@ -76,11 +81,138 @@ export function isCommand(text: string): boolean {
   return text.startsWith('!') && Object.keys(COMMANDS).includes(text.trim().toLowerCase().split(' ')[0])
 }
 
+// --- Argument parsing helpers ---
+
+interface ParsedArgs {
+  hours?: number
+  name?: string
+  priority?: string
+  count?: number
+}
+
+function parseArgs(args: string[]): ParsedArgs {
+  const result: ParsedArgs = {}
+  const nameTokens: string[] = []
+
+  for (const arg of args) {
+    const hourMatch = arg.match(/^(\d+)h$/i)
+    if (hourMatch) {
+      result.hours = parseInt(hourMatch[1], 10)
+      continue
+    }
+    if (/^(high|medium|med|low)$/i.test(arg)) {
+      result.priority = arg.toLowerCase() === 'med' ? 'medium' : arg.toLowerCase()
+      continue
+    }
+    if (/^\d+$/.test(arg) && parseInt(arg) <= 500) {
+      result.count = parseInt(arg, 10)
+      continue
+    }
+    nameTokens.push(arg)
+  }
+
+  if (nameTokens.length > 0) {
+    result.name = nameTokens.join(' ')
+  }
+
+  return result
+}
+
+function resolveChat(name: string): { jid: string; chatName: string } | string {
+  const config = loadConfig()
+  const search = name.toLowerCase()
+  const matches: { jid: string; chatName: string }[] = []
+
+  for (const jid of config.monitoredChats) {
+    const chatName = getChatName(jid)
+    if (chatName.toLowerCase().includes(search)) {
+      matches.push({ jid, chatName })
+    }
+  }
+
+  if (matches.length === 1) return matches[0]
+  if (matches.length === 0) return `No monitored chat matching '${name}'. Run !chats to see your monitored conversations.`
+  return `Multiple matches for '${name}':\n${matches.map(m => `  - ${m.chatName} (${m.jid})`).join('\n')}\nBe more specific.`
+}
+
+// --- Rich item formatting ---
+
+function formatItemsRich(items: any[], header: string): string {
+  const high = items.filter((i: any) => i.priority === 'high')
+  const medium = items.filter((i: any) => i.priority === 'medium')
+  const low = items.filter((i: any) => i.priority === 'low')
+  const routed = items.filter((i: any) => i.routed_to_projectops).length
+
+  const lines: string[] = [header, '']
+
+  const maxShow = 15
+  let shown = 0
+
+  if (high.length > 0) {
+    lines.push('🔴 *HIGH PRIORITY*\n')
+    for (const item of high) {
+      if (shown >= maxShow) break
+      shown++
+      lines.push(formatSingleItem(item, shown))
+    }
+    lines.push('')
+  }
+
+  if (medium.length > 0 && shown < maxShow) {
+    lines.push('🟡 *MEDIUM PRIORITY*\n')
+    for (const item of medium) {
+      if (shown >= maxShow) break
+      shown++
+      lines.push(formatSingleItem(item, shown))
+    }
+    lines.push('')
+  }
+
+  if (low.length > 0 && shown < maxShow) {
+    lines.push('🟢 *LOW PRIORITY*\n')
+    for (const item of low) {
+      if (shown >= maxShow) break
+      shown++
+      lines.push(formatSingleItem(item, shown))
+    }
+    lines.push('')
+  }
+
+  if (items.length > maxShow) {
+    lines.push(`...and ${items.length - maxShow} more. Check Project Ops for full list.`)
+    lines.push('')
+  }
+
+  lines.push('━━━━━━━━━━━━━━━━━━━')
+  lines.push(`✅ ${routed} item(s) routed to Project Ops`)
+
+  return lines.join('\n')
+}
+
+function formatSingleItem(item: any, num: number): string {
+  const lines: string[] = []
+  lines.push(`${num}. *${item.title}*`)
+  if (item.description) {
+    lines.push(`   ${item.description.slice(0, 120)}`)
+  }
+  const chatName = getChatName(item.chat_jid)
+  lines.push(`   📌 Source: ${chatName}`)
+  lines.push(`   📅 Due: ${item.due_date || 'none set'}`)
+  lines.push(`   🏷️ Type: ${item.item_type}`)
+  return lines.join('\n')
+}
+
+// --- Command handlers ---
+
 async function replyHelp(chatJid: string) {
   const lines = ['*KIT Bot Commands:*\n']
   for (const [cmd, desc] of Object.entries(COMMANDS)) {
     lines.push(`${cmd} — ${desc}`)
   }
+  lines.push('\n*Examples:*')
+  lines.push('!scan Sculpture 48h')
+  lines.push('!recent Finance high')
+  lines.push('!digest 72h')
   await sendDirectMessage(chatJid, lines.join('\n'))
 }
 
@@ -88,79 +220,42 @@ async function replyChats(chatJid: string) {
   const sock = getSocket()
   if (!sock) return
 
-  // Collect chats from stored data
+  const config = loadConfig()
+
+  // Fetch groups directly
+  let groups: Record<string, any> = {}
+  try {
+    groups = await sock.groupFetchAllParticipating()
+  } catch {}
+
+  // Also include DB-known chats
   const chatMap = new Map<string, any>()
+  for (const [id, g] of Object.entries(groups)) {
+    chatMap.set(id, { id, name: g.subject, isGroup: true, members: g.participants?.length })
+  }
 
-  await new Promise<void>((resolve) => {
-    const timeout = setTimeout(resolve, 8000)
+  const db = getDb()
+  const dbChats = db.prepare(
+    `SELECT DISTINCT chat_jid, MAX(timestamp) as last_ts, COUNT(*) as msg_count
+     FROM messages GROUP BY chat_jid ORDER BY last_ts DESC`
+  ).all() as any[]
 
-    sock.ev.on('messaging-history.set', ({ chats }: any) => {
-      for (const chat of chats) chatMap.set(chat.id, chat)
-    })
-
-    sock.ev.on('chats.upsert', (chats: any[]) => {
-      for (const chat of chats) chatMap.set(chat.id, chat)
-    })
-
-    // Also check if we already have chats in the DB
-    const db = getDb()
-    const dbChats = db
-      .prepare(
-        `SELECT DISTINCT chat_jid, MAX(timestamp) as last_ts, COUNT(*) as msg_count
-         FROM messages GROUP BY chat_jid ORDER BY last_ts DESC`
-      )
-      .all() as any[]
-
-    for (const c of dbChats) {
-      if (!chatMap.has(c.chat_jid)) {
-        chatMap.set(c.chat_jid, {
-          id: c.chat_jid,
-          conversationTimestamp: c.last_ts,
-          name: null,
-        })
-      }
+  for (const c of dbChats) {
+    if (!chatMap.has(c.chat_jid)) {
+      chatMap.set(c.chat_jid, { id: c.chat_jid, name: null, isGroup: c.chat_jid.endsWith('@g.us') })
     }
-
-    // Give history sync a moment
-    setTimeout(() => {
-      clearTimeout(timeout)
-      resolve()
-    }, 3000)
-  })
-
-  const conversations: ConversationInfo[] = []
-  for (const [id, chat] of chatMap) {
-    if (id === 'status@broadcast') continue
-    const isGroup = id.endsWith('@g.us')
-    const ts = chat.conversationTimestamp || chat.lastMessageRecvTimestamp
-    conversations.push({
-      jid: id,
-      name: chat.name || chat.subject || (isGroup ? null : id.replace('@s.whatsapp.net', '').replace('@lid', '')),
-      lastMessageTimestamp: ts ? (typeof ts === 'number' ? ts : ts.low) : null,
-      isGroup,
-    })
   }
 
-  conversations.sort((a, b) => (b.lastMessageTimestamp || 0) - (a.lastMessageTimestamp || 0))
-
-  if (conversations.length === 0) {
-    await sendDirectMessage(chatJid, 'No conversations found yet. History may still be syncing.')
-    return
-  }
+  const monitored = new Set(config.monitoredChats)
+  const conversations = Array.from(chatMap.values())
 
   const lines = [`*Conversations (${conversations.length}):*\n`]
   for (let i = 0; i < Math.min(conversations.length, 50); i++) {
     const c = conversations[i]
     const type = c.isGroup ? 'GRP' : 'DM'
-    const name = c.name || 'Unknown'
-    const ts = c.lastMessageTimestamp
-      ? new Date(c.lastMessageTimestamp * 1000).toISOString().slice(0, 10)
-      : '?'
-    lines.push(`${i + 1}. [${type}] ${name}\n   ${c.jid}\n   Last: ${ts}`)
-  }
-
-  if (conversations.length > 50) {
-    lines.push(`\n...and ${conversations.length - 50} more`)
+    const name = c.name || c.id.split('@')[0]
+    const mon = monitored.has(c.id) ? ' ✅' : ''
+    lines.push(`${i + 1}. [${type}] ${name}${mon}\n   ${c.id}`)
   }
 
   await sendDirectMessage(chatJid, lines.join('\n'))
@@ -180,23 +275,57 @@ async function replyStatus(chatJid: string) {
   if (scans.length > 0) {
     lines.push(`\n*Recent scans:*`)
     for (const s of scans.slice(0, 5)) {
-      lines.push(
-        `  ${s.scan_completed_at?.slice(0, 16)} — ${s.chat_jid?.split('@')[0]}: ${s.items_extracted} items (${s.status})`
-      )
+      const name = getChatName(s.chat_jid)
+      lines.push(`  ${s.scan_completed_at?.slice(0, 16)} — ${name}: ${s.items_extracted} items (${s.status})`)
     }
   }
 
   await sendDirectMessage(chatJid, lines.join('\n'))
 }
 
-async function replyScan(chatJid: string) {
-  await sendDirectMessage(chatJid, 'Scanning monitored chats...')
-  const results = await scanMonitoredChats()
-  const total = results.reduce((s, r) => s + r.items_extracted, 0)
-  await sendDirectMessage(
-    chatJid,
-    `Scan complete. ${results.length} chat(s) scanned, ${total} item(s) extracted.`
-  )
+async function replyScan(chatJid: string, args: string[]) {
+  const parsed = parseArgs(args)
+  const lookbackHours = parsed.hours || undefined
+
+  let targetJids: string[] | undefined
+  let chatLabel = 'all monitored chats'
+
+  if (parsed.name) {
+    const resolved = resolveChat(parsed.name)
+    if (typeof resolved === 'string') {
+      await sendDirectMessage(chatJid, resolved)
+      return
+    }
+    targetJids = [resolved.jid]
+    chatLabel = resolved.chatName
+  }
+
+  const hourLabel = lookbackHours ? `${lookbackHours}h` : 'default'
+  await sendDirectMessage(chatJid, `⏳ Scanning ${chatLabel} (lookback: ${hourLabel})...`)
+
+  const results = await scanMonitoredChats({
+    chatJids: targetJids,
+    lookbackHours,
+  })
+
+  await routeToProjectOps()
+
+  const totalItems = results.reduce((s, r) => s + r.items_extracted, 0)
+  const totalMsgs = results.reduce((s, r) => s + r.messages_scanned, 0)
+
+  if (totalItems === 0) {
+    await sendDirectMessage(chatJid,
+      `📋 *Scan Results* — ${chatLabel}\n📅 ${new Date().toISOString().slice(0, 10)} | ⏰ Lookback: ${hourLabel} | Scanned: ${totalMsgs} messages\n\nNo actionable items found.`)
+    return
+  }
+
+  // Fetch the items we just extracted (most recent N)
+  const recentItems = getRecentExtractedItems(totalItems)
+
+  const header = `📋 *Scan Results* — ${chatLabel}\n📅 ${new Date().toISOString().slice(0, 10)} | ⏰ Lookback: ${hourLabel} | Found: ${totalItems} items\n\n━━━━━━━━━━━━━━━━━━━`
+  const message = formatItemsRich(recentItems, header)
+
+  await sendDirectMessage(chatJid, message)
 }
 
 async function replyRoute(chatJid: string) {
@@ -214,23 +343,75 @@ async function replyNotify(chatJid: string) {
   }
 }
 
-async function replyRecent(chatJid: string) {
-  const items = getRecentExtractedItems(10) as any[]
+async function replyRecent(chatJid: string, args: string[]) {
+  const parsed = parseArgs(args)
+
+  let filterChatJid: string | undefined
+  let chatLabel = 'all chats'
+
+  if (parsed.name) {
+    const resolved = resolveChat(parsed.name)
+    if (typeof resolved === 'string') {
+      await sendDirectMessage(chatJid, resolved)
+      return
+    }
+    filterChatJid = resolved.jid
+    chatLabel = resolved.chatName
+  }
+
+  const items = getFilteredItems({
+    chatJid: filterChatJid,
+    hoursBack: parsed.hours || (parsed.name ? 168 : undefined), // 7 days default for name filter
+    priority: parsed.priority,
+    limit: parsed.count || 50,
+  })
+
   if (items.length === 0) {
-    await sendDirectMessage(chatJid, 'No extracted items yet.')
+    await sendDirectMessage(chatJid, 'No items found matching your filters.')
     return
   }
 
-  const lines = ['*Recent Extracted Items:*\n']
-  for (const item of items) {
-    const routed = item.routed_to_projectops ? 'routed' : 'pending'
-    const notified = item.notified_haley ? 'notified' : 'quiet'
-    lines.push(
-      `- [${item.priority}] ${item.title}\n  Type: ${item.item_type} | ${routed} | ${notified}\n  ${item.created_at}`
-    )
+  const filterDesc = [chatLabel]
+  if (parsed.hours) filterDesc.push(`${parsed.hours}h`)
+  if (parsed.priority) filterDesc.push(parsed.priority)
+
+  const header = `📋 *Recent Items* — ${filterDesc.join(' | ')}\nShowing ${items.length} item(s)\n\n━━━━━━━━━━━━━━━━━━━`
+  const message = formatItemsRich(items, header)
+
+  await sendDirectMessage(chatJid, message)
+}
+
+async function replyDigest(chatJid: string, args: string[]) {
+  const parsed = parseArgs(args)
+  const hoursBack = parsed.hours || 24
+
+  let filterChatJid: string | undefined
+  let chatLabel = 'all chats'
+
+  if (parsed.name) {
+    const resolved = resolveChat(parsed.name)
+    if (typeof resolved === 'string') {
+      await sendDirectMessage(chatJid, resolved)
+      return
+    }
+    filterChatJid = resolved.jid
+    chatLabel = resolved.chatName
   }
 
-  await sendDirectMessage(chatJid, lines.join('\n'))
+  const items = getFilteredItems({
+    chatJid: filterChatJid,
+    hoursBack,
+  })
+
+  if (items.length === 0) {
+    await sendDirectMessage(chatJid, `No items in the last ${hoursBack}h for ${chatLabel}.`)
+    return
+  }
+
+  const header = `📋 *Digest* — ${chatLabel}\n📅 Last ${hoursBack}h | ${items.length} item(s)\n\n━━━━━━━━━━━━━━━━━━━`
+  const message = formatItemsRich(items, header)
+
+  await sendDirectMessage(chatJid, message)
 }
 
 async function replyConfig(chatJid: string) {
@@ -238,10 +419,13 @@ async function replyConfig(chatJid: string) {
   const lines = ['*Bot Configuration:*\n']
   lines.push(`Scan interval: ${config.scanIntervalMinutes} min`)
   lines.push(`Lookback: ${config.scanLookbackHours} hours`)
-  lines.push(`Monitored: ${config.monitoredChats.length ? config.monitoredChats.join(', ') : 'none'}`)
-  lines.push(`Haley JID: ${config.haleyWhatsAppJid || 'not set'}`)
+  lines.push(`Monitored: ${config.monitoredChats.length} chat(s)`)
+  for (const jid of config.monitoredChats) {
+    lines.push(`  - ${getChatName(jid)}`)
+  }
+  lines.push(`\nHaily JID: ${config.haleyWhatsAppJid || 'not set'}`)
   lines.push(`AI model: ${config.openrouterDefaultModel}`)
-  lines.push(`Project Ops: ${config.projectOpsApiUrl || 'not set'}`)
+  lines.push(`Supabase: ${config.supabaseUrl ? 'connected' : 'NOT SET'}`)
   lines.push(`OpenRouter key: ${config.openrouterApiKey ? 'set' : 'NOT SET'}`)
 
   await sendDirectMessage(chatJid, lines.join('\n'))
