@@ -1,0 +1,28 @@
+{
+  "skill_name": "sync-agent",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "The sync agent isn't pushing contacts. Help me debug it.",
+      "expected_output": "Debugging steps: check logs, verify credentials, test health endpoint",
+      "files": [],
+      "expectations": [
+        "Suggests checking ~/.keepintouch/crm_sync_stdout.log",
+        "Suggests verifying CRM_URL and CRM_API_KEY in the plist",
+        "Suggests testing the health endpoint with curl",
+        "References the correct plist location"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Add a new field 'email' to the sync agent so it pushes contact emails to the CRM",
+      "expected_output": "Updated crm_sync_agent.py to include email in the push payload",
+      "files": [],
+      "expectations": [
+        "sync-agent/crm_sync_agent.py is modified",
+        "The get_local_contacts() SQL query includes email if the column exists",
+        "The push payload includes the email field"
+      ]
+    }
+  ]
+}

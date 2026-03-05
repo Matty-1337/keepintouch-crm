@@ -1,0 +1,39 @@
+{
+  "skill_name": "contact-management",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Add a new category called 'Church' with a teal color scheme",
+      "expected_output": "Category added to utils.ts constants and tailwind.config.ts",
+      "files": [],
+      "expectations": [
+        "CATEGORY_OPTIONS in src/lib/utils.ts includes 'Church'",
+        "CATEGORY_COLORS in src/lib/utils.ts has a teal-themed class for Church",
+        "CATEGORY_CHART_COLORS has a teal hex color for Church",
+        "tailwind.config.ts has a church color entry"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "The queue page should show a count of how many contacts are overdue in the page title",
+      "expected_output": "Queue page updated to show overdue count in heading",
+      "files": [],
+      "expectations": [
+        "src/app/queue/page.tsx is modified",
+        "The overdue count is displayed in the page heading",
+        "The count comes from the existing Prisma query"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Add a bulk snooze feature that lets me snooze all overdue contacts by 3 days",
+      "expected_output": "New API endpoint and UI button for bulk snooze",
+      "files": [],
+      "expectations": [
+        "A mechanism exists to update multiple contacts' nextDue dates at once",
+        "The snooze adds days to nextDue without changing lastContact",
+        "The UI provides a way to trigger the bulk action"
+      ]
+    }
+  ]
+}

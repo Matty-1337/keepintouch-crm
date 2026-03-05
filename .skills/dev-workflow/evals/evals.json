@@ -1,0 +1,29 @@
+{
+  "skill_name": "dev-workflow",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I just cloned the repo. How do I get the dev environment running?",
+      "expected_output": "Step-by-step local setup instructions",
+      "files": [],
+      "expectations": [
+        "Mentions npm install",
+        "Mentions copying .env.example to .env.local",
+        "Mentions npx prisma migrate dev",
+        "Mentions npm run db:seed",
+        "Mentions npm run dev"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Update the HANDOFF.md with what we did this session",
+      "expected_output": "HANDOFF.md created or updated with session summary",
+      "files": [],
+      "expectations": [
+        "HANDOFF.md is created or updated at the repo root",
+        "Follows the template format with Last Session, Current State, Next Steps",
+        "Includes specific details about what was done"
+      ]
+    }
+  ]
+}

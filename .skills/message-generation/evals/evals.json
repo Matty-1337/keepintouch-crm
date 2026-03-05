@@ -1,0 +1,31 @@
+{
+  "skill_name": "message-generation",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Create the /api/messages/generate endpoint that uses OpenRouter to generate a draft message for a contact",
+      "expected_output": "New API route that calls OpenRouter, creates a draft Message",
+      "files": [],
+      "expectations": [
+        "A route file exists at src/app/api/messages/generate/route.ts",
+        "It accepts a contactId in the request body",
+        "It fetches the contact data from Prisma for prompt context",
+        "It calls OpenRouter's chat completions endpoint",
+        "It creates a Message record with status 'draft'",
+        "It uses the ghostwriting prompt template from the reference implementation"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Add a Generate Message button to the queue card that creates an AI draft",
+      "expected_output": "Button added to queue-card.tsx that calls the generate endpoint",
+      "files": [],
+      "expectations": [
+        "src/components/queue/queue-card.tsx is modified",
+        "A new button is added alongside the existing actions",
+        "Clicking it calls POST /api/messages/generate",
+        "Loading state is shown while generating"
+      ]
+    }
+  ]
+}

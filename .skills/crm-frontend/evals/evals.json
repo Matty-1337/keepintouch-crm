@@ -1,0 +1,39 @@
+{
+  "skill_name": "crm-frontend",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Add a loading skeleton to the contacts page while data is being fetched",
+      "expected_output": "A loading.tsx file created for the contacts route",
+      "files": [],
+      "expectations": [
+        "A loading.tsx file is created at src/app/contacts/loading.tsx",
+        "The skeleton uses existing UI components or Tailwind animations",
+        "It approximates the layout of the contacts table"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Add a confirmation dialog before archiving a contact",
+      "expected_output": "Dialog component added to contact-form.tsx with confirm/cancel",
+      "files": [],
+      "expectations": [
+        "Uses the existing Dialog component from src/components/ui/dialog",
+        "Shows before the archive API call is made",
+        "Has cancel and confirm buttons",
+        "Contact name is shown in the confirmation message"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "The dashboard stats cards need icons and the overdue count should be red when > 0",
+      "expected_output": "Updated stats-cards.tsx with conditional styling",
+      "files": [],
+      "expectations": [
+        "src/components/dashboard/stats-cards.tsx is modified",
+        "The overdue stat uses red styling when count > 0",
+        "lucide-react icons are used appropriately"
+      ]
+    }
+  ]
+}

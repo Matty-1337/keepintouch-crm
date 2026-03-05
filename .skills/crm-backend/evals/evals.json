@@ -1,0 +1,39 @@
+{
+  "skill_name": "crm-backend",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Add a 'score' integer field to the Contact model in Prisma and create a migration",
+      "expected_output": "Updated schema.prisma with score field, migration file created",
+      "files": [],
+      "expectations": [
+        "The schema.prisma file is modified to include a score field on the Contact model",
+        "A new migration is created in prisma/migrations/",
+        "The field has a sensible default value"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Create a new API endpoint GET /api/contacts/overdue that returns contacts past their nextDue date",
+      "expected_output": "New route.ts file with GET handler filtering by nextDue",
+      "files": [],
+      "expectations": [
+        "A new file is created at src/app/api/contacts/overdue/route.ts",
+        "The endpoint uses validateApiKey for auth",
+        "The Prisma query filters for kitActive: true, archived: false, nextDue lte now",
+        "Results are ordered by nextDue ascending"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "The sync endpoint is returning 500 errors when contacts have duplicate phone numbers. Fix the upsert logic.",
+      "expected_output": "Updated sync route.ts with better dedup handling",
+      "files": [],
+      "expectations": [
+        "The fix is applied to src/app/api/contacts/sync/route.ts",
+        "Duplicate phone numbers are handled gracefully without 500 errors",
+        "The existing findFirst OR logic is improved"
+      ]
+    }
+  ]
+}

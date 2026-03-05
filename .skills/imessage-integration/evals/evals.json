@@ -1,0 +1,29 @@
+{
+  "skill_name": "imessage-integration",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "How do I read recent iMessages for a specific contact from chat.db?",
+      "expected_output": "SQLite query against ~/Library/Messages/chat.db with handle join",
+      "files": [],
+      "expectations": [
+        "Provides a SQLite query joining message and handle tables",
+        "Mentions the chat.db path ~/Library/Messages/chat.db",
+        "Notes that this must run on the Mac, not Railway",
+        "Explains the Apple epoch date format"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I want to send an iMessage from the CRM. How should this work?",
+      "expected_output": "Explanation of the two-repo boundary and the draft-to-send flow",
+      "files": [],
+      "expectations": [
+        "Explains that iMessage sending cannot happen from Railway",
+        "Describes the flow: CRM creates draft → sync agent pulls → local script sends",
+        "Mentions osascript as the sending mechanism",
+        "Notes that the full send pipeline is not yet implemented"
+      ]
+    }
+  ]
+}

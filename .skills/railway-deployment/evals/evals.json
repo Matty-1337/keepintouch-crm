@@ -1,0 +1,28 @@
+{
+  "skill_name": "railway-deployment",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "The Railway deploy is failing with a Prisma migration error. Help me debug.",
+      "expected_output": "Debugging steps for Railway migration failures",
+      "files": [],
+      "expectations": [
+        "Suggests checking Railway deployment logs",
+        "Mentions that prisma migrate deploy runs on start",
+        "Suggests verifying DATABASE_URL is set correctly",
+        "Mentions checking migration files are committed to git"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Add OPENROUTER_API_KEY as a new environment variable for production",
+      "expected_output": "Instructions for adding env var to Railway",
+      "files": [],
+      "expectations": [
+        "Explains how to add env vars in Railway dashboard",
+        "Mentions updating .env.example for documentation",
+        "Notes that NEXT_PUBLIC_ prefix is needed only for client-side vars"
+      ]
+    }
+  ]
+}
