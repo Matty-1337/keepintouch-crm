@@ -22,6 +22,7 @@ let sock: WASocket | null = null
 let reconnectAttempts = 0
 let lastConnectedAt: number | null = null
 let disconnectedSince: number | null = null
+let pairingCodeRequested = false
 
 const MAX_RECONNECT_ATTEMPTS = 20
 const MAX_BACKOFF_MS = 60000
@@ -50,19 +51,22 @@ export async function connectToWhatsApp(): Promise<WASocket> {
   const usePairingCode = process.env.USE_PAIRING_CODE === 'true'
   const pairingPhone = process.env.PAIRING_PHONE_NUMBER
 
-  if (usePairingCode && pairingPhone && !state.creds.registered) {
+  if (usePairingCode && pairingPhone && !state.creds.registered && !pairingCodeRequested) {
+    pairingCodeRequested = true
     // Wait for socket to be ready before requesting pairing code
     setTimeout(async () => {
       try {
+        console.log(`Requesting pairing code for ${pairingPhone}...`)
         const code = await sock!.requestPairingCode(pairingPhone)
         console.log(`\n========================================`)
         console.log(`PAIRING CODE: ${code}`)
         console.log(`Enter this code in WhatsApp > Linked Devices > Link with phone number`)
+        console.log(`Phone number: ${pairingPhone}`)
         console.log(`========================================\n`)
       } catch (err) {
         console.error('Failed to request pairing code:', err)
       }
-    }, 3000)
+    }, 5000)
   }
 
   sock.ev.on('connection.update', (update) => {
