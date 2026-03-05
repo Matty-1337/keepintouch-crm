@@ -13,6 +13,13 @@ import qrcode from 'qrcode-terminal'
 import type { ConversationInfo } from './types'
 
 const AUTH_DIR = process.env.AUTH_DIR || path.resolve(__dirname, '..', 'auth_info')
+
+// Clear auth state if CLEAR_AUTH=true (for recovering from corrupt sessions)
+if (process.env.CLEAR_AUTH === 'true' && fs.existsSync(AUTH_DIR)) {
+  console.log('CLEAR_AUTH=true — removing old auth state...')
+  fs.rmSync(AUTH_DIR, { recursive: true })
+}
+
 if (!fs.existsSync(AUTH_DIR)) {
   fs.mkdirSync(AUTH_DIR, { recursive: true })
 }
