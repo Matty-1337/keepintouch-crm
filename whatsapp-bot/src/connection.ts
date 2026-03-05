@@ -6,12 +6,16 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
 } from '@whiskeysockets/baileys'
 import { Boom } from '@hapi/boom'
+import fs from 'fs'
 import pino from 'pino'
 import path from 'path'
 import qrcode from 'qrcode-terminal'
 import type { ConversationInfo } from './types'
 
 const AUTH_DIR = process.env.AUTH_DIR || path.resolve(__dirname, '..', 'auth_info')
+if (!fs.existsSync(AUTH_DIR)) {
+  fs.mkdirSync(AUTH_DIR, { recursive: true })
+}
 const logger = pino({ level: process.env.LOG_LEVEL || 'silent' })
 
 let sock: WASocket | null = null
