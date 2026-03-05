@@ -12,6 +12,7 @@
 | 6 | `railway-deployment` | Deploy | P1 | deploy, Railway, production, NIXPACKS, env var, migrate deploy |
 | 7 | `imessage-integration` | iMessage | P1 | iMessage, chat.db, two-repo, osascript, local scripts, AppleScript |
 | 8 | `dev-workflow` | Workflow | P2 | HANDOFF, commit, setup, onboarding, local dev, clone |
+| 9 | `whatsapp-bot` | WhatsApp | P0 | WhatsApp, Baileys, scanner, extractor, action items, Haily, notifier, bot commands |
 
 ## Dependency Graph
 
@@ -27,6 +28,10 @@ crm-backend (P0)
 crm-frontend (P1)         — independent
 railway-deployment (P1)    — independent
 dev-workflow (P2)           — independent
+
+whatsapp-bot (P0)
+├── message-generation (P1)  — shares AI patterns (OpenRouter)
+└── (Supabase direct → Project Ops haily_directives table)
 ```
 
 ## Directory Structure
@@ -60,7 +65,10 @@ dev-workflow (P2)           — independent
 ├── imessage-integration/
 │   ├── SKILL.md
 │   └── evals/evals.json
-└── dev-workflow/
+├── dev-workflow/
+│   ├── SKILL.md
+│   └── evals/evals.json
+└── whatsapp-bot/
     ├── SKILL.md
     └── evals/evals.json
 ```

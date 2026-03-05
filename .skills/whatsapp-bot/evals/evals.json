@@ -1,0 +1,57 @@
+[
+  {
+    "id": "wa-bot-add-command",
+    "description": "Add a new !ping bot command that replies with uptime",
+    "prompt": "Add a new !ping command to the WhatsApp bot that replies with the bot's uptime since start",
+    "expectations": [
+      "Modifies src/commands.ts",
+      "Adds !ping to the COMMANDS object",
+      "Adds a case in the switch statement",
+      "Tracks startTime or uses process.uptime()",
+      "Calls sendDirectMessage to reply"
+    ]
+  },
+  {
+    "id": "wa-bot-change-ai-model",
+    "description": "Switch the default AI model from glm-4.7 to a different model",
+    "prompt": "Change the WhatsApp bot to use deepseek/deepseek-chat-v3.2 as the primary AI model instead of glm-4.7",
+    "expectations": [
+      "Modifies .env.example to update OPENROUTER_DEFAULT_MODEL",
+      "Updates config.ts default value",
+      "Does NOT modify extractor.ts since it reads from config"
+    ]
+  },
+  {
+    "id": "wa-bot-add-monitored-chat",
+    "description": "Add a new monitored chat via environment variable",
+    "prompt": "Add the group chat 120363012345@g.us to the list of monitored WhatsApp conversations",
+    "expectations": [
+      "Modifies .env file MONITORED_CHATS value",
+      "Uses the @g.us format for group chats",
+      "Does NOT modify source code"
+    ]
+  },
+  {
+    "id": "wa-bot-fix-extraction-prompt",
+    "description": "Modify the AI extraction prompt to also extract meeting scheduling",
+    "prompt": "Update the WhatsApp bot extractor to also detect and extract meeting scheduling requests from conversations",
+    "expectations": [
+      "Modifies src/extractor.ts",
+      "Updates EXTRACTION_PROMPT to mention meeting scheduling",
+      "May add 'meeting' to item_type or use existing types",
+      "Does NOT break the existing JSON response format"
+    ]
+  },
+  {
+    "id": "wa-bot-supabase-routing",
+    "description": "Verify understanding of the Supabase routing flow",
+    "prompt": "Explain how extracted items get routed from the WhatsApp bot to the Project Ops database",
+    "expectations": [
+      "Mentions scanner.ts triggers extraction",
+      "Mentions extractor.ts calls AI and stores in local SQLite",
+      "Mentions router.ts reads unrouted items and inserts into Supabase haily_directives table",
+      "Mentions the profile UUIDs for Haily and Matt",
+      "Mentions the priority mapping (high→High, medium→Normal, low→Low)"
+    ]
+  }
+]
