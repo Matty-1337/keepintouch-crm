@@ -79,15 +79,13 @@ export async function connectToWhatsApp(): Promise<WASocket> {
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update
 
-    if (qr && !usePairingCode) {
-      console.log('\n=== SCAN THIS QR CODE WITH WHATSAPP ===\n')
-      qrcode.generate(qr, { small: true })
-
+    if (qr) {
       const encoded = encodeURIComponent(qr)
       const qrUrl = `https://quickchart.io/qr?text=${encoded}&size=300`
-      console.log('\nQR Code URL (for headless/Railway):')
+      console.log('\n========================================')
+      console.log('SCAN THIS QR CODE:')
       console.log(qrUrl)
-      console.log('\n========================================\n')
+      console.log('========================================\n')
     }
 
     if (connection === 'close') {

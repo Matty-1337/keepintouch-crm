@@ -14,9 +14,9 @@ RUN npx tsc
 # Remove dev dependencies after build
 RUN npm prune --omit=dev
 
-# Create persistent directory structure
-# On Railway, /app/persist is a mounted volume
-RUN mkdir -p persist/auth_info persist/data data auth_info
+# Copy entrypoint
+COPY entrypoint.sh ./
+RUN chmod +x entrypoint.sh
 
 # Entrypoint
-CMD ["node", "dist/index.js"]
+CMD ["./entrypoint.sh"]
