@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import path from 'path'
 import type { StoredMessage, ExtractedItem, ScanResult } from './types'
 
-const DB_PATH = path.resolve(__dirname, '..', 'data', 'whatsapp-bot.db')
+const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', 'data', 'whatsapp-bot.db')
 
 let db: Database.Database
 

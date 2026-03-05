@@ -11,7 +11,7 @@ import path from 'path'
 import qrcode from 'qrcode-terminal'
 import type { ConversationInfo } from './types'
 
-const AUTH_DIR = path.resolve(__dirname, '..', 'auth_info')
+const AUTH_DIR = process.env.AUTH_DIR || path.resolve(__dirname, '..', 'auth_info')
 const logger = pino({ level: process.env.LOG_LEVEL || 'silent' })
 
 let sock: WASocket | null = null

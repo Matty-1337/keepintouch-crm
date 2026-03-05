@@ -11,8 +11,9 @@ COPY tsconfig.json ./
 COPY src/ ./src/
 RUN npx tsc
 
-# Create persistent directories
-RUN mkdir -p data auth_info
+# Create persistent directory structure
+# On Railway, /app/persist is a mounted volume
+RUN mkdir -p persist/auth_info persist/data data auth_info
 
 # Entrypoint
 CMD ["node", "dist/index.js"]
