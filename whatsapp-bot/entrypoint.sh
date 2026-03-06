@@ -1,4 +1,7 @@
 #!/bin/sh
+echo "[entrypoint] Starting KIT WhatsApp Bot..."
+echo "[entrypoint] Node version: $(node --version)"
+
 AUTH_DIR="${AUTH_DIR:-/app/auth_info}"
 DB_PATH="${DB_PATH:-/app/data/whatsapp-bot.db}"
 DB_DIR=$(dirname "$DB_PATH")
@@ -12,5 +15,11 @@ fi
 
 # Ensure directories exist
 mkdir -p "$AUTH_DIR" "$DB_DIR"
+
+echo "[entrypoint] AUTH_DIR=$AUTH_DIR"
+echo "[entrypoint] DB_PATH=$DB_PATH"
+echo "[entrypoint] Checking dist/index.js..."
+ls -la /app/dist/index.js 2>&1 || echo "[entrypoint] ERROR: dist/index.js not found!"
+echo "[entrypoint] Launching node dist/index.js..."
 
 exec node dist/index.js
