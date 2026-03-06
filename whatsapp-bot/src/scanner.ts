@@ -6,6 +6,7 @@ import {
   logScan,
 } from './storage'
 import { extractItems } from './extractor'
+import { fetchChatMessages } from './connection'
 import type { ScanResult } from './types'
 
 export async function scanMonitoredChats(overrides?: {
@@ -41,7 +42,20 @@ async function scanChat(chatJid: string, lookbackHours: number): Promise<ScanRes
   const sinceTimestamp = Math.floor((Date.now() - lookbackHours * 60 * 60 * 1000) / 1000)
 
   try {
-    const messages = getUnprocessedMessages(chatJid, sinceTimestamp)
+    let messages = getUnprocessedMessages(chatJid, sinceTimestamp)
+
+    // If no stored messages, try fetching history from WhatsApp
+    if (messages.length === 0) {
+      console.log(`[Scanner] ${chatJid}: No stored messages, fetching history from WhatsApp...`)
+      const fetched = await fetchChatMessages(chatJid, 50)
+      if (fetched.length > 0) {
+        console.log(`[Scanner] ${chatJid}: Fetched ${fetched.length} message(s) from history.`)
+        for (const msg of fetched) {
+          storeIncomingMessage(msg)
+        }
+        messages = getUnprocessedMessages(chatJid, sinceTimestamp)
+      }
+    }
 
     if (messages.length === 0) {
       console.log(`[Scanner] ${chatJid}: No unprocessed messages.`)

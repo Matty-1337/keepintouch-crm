@@ -28,15 +28,21 @@ export async function populateChatNames(): Promise<void> {
     }
   } catch {}
 
-  // Listen for contact name updates (DMs get names from contacts.upsert)
-  sock.ev.on('contacts.upsert', (contacts) => {
-    for (const c of contacts) {
-      const name = (c as any).notify || (c as any).name || (c as any).verifiedName
-      if (name && (c as any).id) {
-        chatNameCache.set((c as any).id, name)
-      }
+  // Cache contact names from contacts.upsert and contacts.update events
+  const cacheContact = (c: any) => {
+    const name = c.notify || c.name || c.verifiedName
+    if (!name) return
+    // Cache by all known IDs: id, lid, phoneNumber-derived JID
+    if (c.id) chatNameCache.set(c.id, name)
+    if (c.lid) chatNameCache.set(c.lid, name)
+    if (c.phoneNumber) {
+      const pnJid = c.phoneNumber.replace(/\+/g, '') + '@s.whatsapp.net'
+      chatNameCache.set(pnJid, name)
     }
-  })
+  }
+
+  sock.ev.on('contacts.upsert', (contacts) => contacts.forEach(cacheContact))
+  sock.ev.on('contacts.update', (contacts) => contacts.forEach(cacheContact))
 }
 
 export function setChatName(jid: string, name: string): void {
@@ -154,7 +160,9 @@ function resolveChat(name: string): { jid: string; chatName: string } | string {
 
   for (const jid of config.monitoredChats) {
     const chatName = getChatName(jid)
-    if (chatName.toLowerCase().includes(search)) {
+    // Match against display name, or phone number portion of JID
+    const phoneNumber = jid.split('@')[0]
+    if (chatName.toLowerCase().includes(search) || phoneNumber.includes(search)) {
       matches.push({ jid, chatName })
     }
   }
