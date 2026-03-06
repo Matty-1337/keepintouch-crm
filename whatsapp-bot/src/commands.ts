@@ -19,12 +19,28 @@ const chatNameCache = new Map<string, string>()
 export async function populateChatNames(): Promise<void> {
   const sock = getSocket()
   if (!sock) return
+
+  // Fetch group names
   try {
     const groups = await sock.groupFetchAllParticipating()
     for (const g of Object.values(groups)) {
-      chatNameCache.set(g.id, g.subject)
+      chatNameCache.set((g as any).id, (g as any).subject)
     }
   } catch {}
+
+  // Listen for contact name updates (DMs get names from contacts.upsert)
+  sock.ev.on('contacts.upsert', (contacts) => {
+    for (const c of contacts) {
+      const name = (c as any).notify || (c as any).name || (c as any).verifiedName
+      if (name && (c as any).id) {
+        chatNameCache.set((c as any).id, name)
+      }
+    }
+  })
+}
+
+export function setChatName(jid: string, name: string): void {
+  chatNameCache.set(jid, name)
 }
 
 function getChatName(jid: string): string {
@@ -241,12 +257,13 @@ async function replyChats(chatJid: string) {
     groups = await sock.groupFetchAllParticipating()
   } catch {}
 
-  // Also include DB-known chats
+  // Build chat map starting with groups
   const chatMap = new Map<string, any>()
   for (const [id, g] of Object.entries(groups)) {
     chatMap.set(id, { id, name: g.subject, isGroup: true, members: g.participants?.length })
   }
 
+  // Add DB-known chats
   const db = getDb()
   const dbChats = db.prepare(
     `SELECT DISTINCT chat_jid, MAX(timestamp) as last_ts, COUNT(*) as msg_count
@@ -256,6 +273,13 @@ async function replyChats(chatJid: string) {
   for (const c of dbChats) {
     if (!chatMap.has(c.chat_jid)) {
       chatMap.set(c.chat_jid, { id: c.chat_jid, name: null, isGroup: c.chat_jid.endsWith('@g.us') })
+    }
+  }
+
+  // Ensure ALL monitored chats appear (including DMs with no messages yet)
+  for (const jid of config.monitoredChats) {
+    if (!chatMap.has(jid)) {
+      chatMap.set(jid, { id: jid, name: getChatName(jid), isGroup: jid.endsWith('@g.us') })
     }
   }
 

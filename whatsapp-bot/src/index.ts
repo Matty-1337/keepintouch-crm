@@ -5,7 +5,7 @@ import { getDb, closeDb } from './storage'
 import { scanMonitoredChats, storeIncomingMessage } from './scanner'
 import { routeToProjectOps, testProjectOpsConnection } from './router'
 import { notifyHaley } from './notifier'
-import { handleCommand, isCommand, populateChatNames } from './commands'
+import { handleCommand, isCommand, populateChatNames, setChatName } from './commands'
 
 const config = loadConfig()
 let cronTask: ReturnType<typeof cron.schedule> | null = null
@@ -42,6 +42,11 @@ async function main() {
     try {
       const chatJid = msg.key.remoteJid
       if (!chatJid) return
+
+      // Cache DM contact names from pushName
+      if (msg.pushName && chatJid.endsWith('@s.whatsapp.net') && !msg.key.fromMe) {
+        setChatName(chatJid, msg.pushName)
+      }
 
       const content =
         msg.message?.conversation ||
