@@ -144,53 +144,6 @@ export async function closeSocket(): Promise<void> {
   }
 }
 
-export async function fetchChatMessages(
-  chatJid: string,
-  count: number = 50
-): Promise<any[]> {
-  if (!sock) return []
-  try {
-    // Request history for this chat — results arrive via messaging-history.set
-    const collected: any[] = []
-    const timeoutMs = 15000
-
-    const promise = new Promise<any[]>((resolve) => {
-      const timer = setTimeout(() => {
-        sock?.ev.off('messaging-history.set', handler)
-        resolve(collected)
-      }, timeoutMs)
-
-      const handler = ({ messages, isLatest }: any) => {
-        for (const msg of messages) {
-          if (msg.key?.remoteJid === chatJid && msg.message) {
-            collected.push(msg)
-          }
-        }
-        // If we got enough or this is the latest batch, resolve early
-        if (collected.length >= count || isLatest) {
-          clearTimeout(timer)
-          sock?.ev.off('messaging-history.set', handler)
-          resolve(collected)
-        }
-      }
-
-      sock?.ev.on('messaging-history.set', handler)
-    })
-
-    // Trigger fetch with a synthetic key for the target chat
-    await sock.fetchMessageHistory(
-      count,
-      { remoteJid: chatJid, fromMe: false, id: '' },
-      0
-    )
-
-    return await promise
-  } catch (err) {
-    console.error(`[Connection] Failed to fetch messages for ${chatJid}:`, err)
-    return []
-  }
-}
-
 export function onNewMessage(callback: (msg: any) => void): void {
   if (!sock) throw new Error('Not connected to WhatsApp')
 

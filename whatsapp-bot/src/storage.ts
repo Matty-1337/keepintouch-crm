@@ -64,11 +64,32 @@ function initSchema(): void {
       status TEXT DEFAULT 'success'
     );
 
+    CREATE TABLE IF NOT EXISTS chat_names (
+      jid TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_messages_processed ON messages(processed, chat_jid);
     CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
     CREATE INDEX IF NOT EXISTS idx_extracted_routed ON extracted_items(routed_to_projectops);
     CREATE INDEX IF NOT EXISTS idx_extracted_notified ON extracted_items(notified_haley);
   `)
+}
+
+export function saveChatName(jid: string, name: string): void {
+  const d = getDb()
+  d.prepare(`INSERT OR REPLACE INTO chat_names (jid, name, updated_at) VALUES (?, ?, datetime('now'))`).run(jid, name)
+}
+
+export function loadChatNames(): Map<string, string> {
+  const d = getDb()
+  const rows = d.prepare('SELECT jid, name FROM chat_names').all() as any[]
+  const map = new Map<string, string>()
+  for (const r of rows) {
+    map.set(r.jid, r.name)
+  }
+  return map
 }
 
 export function storeMessage(msg: StoredMessage): void {

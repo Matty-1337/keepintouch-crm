@@ -7,16 +7,58 @@ import {
   getUnroutedItems,
   getUnnotifiedItems,
   getDb,
+  saveChatName,
+  loadChatNames,
 } from './storage'
 import { scanMonitoredChats } from './scanner'
 import { routeToProjectOps } from './router'
 import { notifyHaley, sendDirectMessage } from './notifier'
 import type { ConversationInfo } from './types'
 
-// Chat name cache — populated from groupFetchAllParticipating
+// Chat name cache — persisted in SQLite, populated from contacts + groups
 const chatNameCache = new Map<string, string>()
 
+// Call BEFORE connecting — registers event listeners that fire during initial sync
+export function registerContactListeners(): void {
+  const sock = getSocket()
+  if (!sock) return
+
+  const cacheContact = (c: any) => {
+    const name = c.notify || c.name || c.verifiedName
+    if (!name) return
+    if (c.id) {
+      chatNameCache.set(c.id, name)
+      saveChatName(c.id, name)
+    }
+    if (c.lid) {
+      chatNameCache.set(c.lid, name)
+      saveChatName(c.lid, name)
+    }
+    if (c.phoneNumber) {
+      const pnJid = c.phoneNumber.replace(/\+/g, '') + '@s.whatsapp.net'
+      chatNameCache.set(pnJid, name)
+      saveChatName(pnJid, name)
+    }
+  }
+
+  sock.ev.on('contacts.upsert', (contacts) => {
+    console.log(`[Contacts] Received ${contacts.length} contact(s) from upsert`)
+    contacts.forEach(cacheContact)
+  })
+  sock.ev.on('contacts.update', (contacts) => {
+    contacts.forEach(cacheContact)
+  })
+}
+
+// Call AFTER connecting — fetches group names and loads persisted names
 export async function populateChatNames(): Promise<void> {
+  // Load persisted names from SQLite first
+  const persisted = loadChatNames()
+  for (const [jid, name] of persisted) {
+    chatNameCache.set(jid, name)
+  }
+  console.log(`[Contacts] Loaded ${persisted.size} persisted chat name(s) from DB`)
+
   const sock = getSocket()
   if (!sock) return
 
@@ -24,29 +66,19 @@ export async function populateChatNames(): Promise<void> {
   try {
     const groups = await sock.groupFetchAllParticipating()
     for (const g of Object.values(groups)) {
-      chatNameCache.set((g as any).id, (g as any).subject)
+      const id = (g as any).id
+      const subject = (g as any).subject
+      if (id && subject) {
+        chatNameCache.set(id, subject)
+        saveChatName(id, subject)
+      }
     }
   } catch {}
-
-  // Cache contact names from contacts.upsert and contacts.update events
-  const cacheContact = (c: any) => {
-    const name = c.notify || c.name || c.verifiedName
-    if (!name) return
-    // Cache by all known IDs: id, lid, phoneNumber-derived JID
-    if (c.id) chatNameCache.set(c.id, name)
-    if (c.lid) chatNameCache.set(c.lid, name)
-    if (c.phoneNumber) {
-      const pnJid = c.phoneNumber.replace(/\+/g, '') + '@s.whatsapp.net'
-      chatNameCache.set(pnJid, name)
-    }
-  }
-
-  sock.ev.on('contacts.upsert', (contacts) => contacts.forEach(cacheContact))
-  sock.ev.on('contacts.update', (contacts) => contacts.forEach(cacheContact))
 }
 
 export function setChatName(jid: string, name: string): void {
   chatNameCache.set(jid, name)
+  saveChatName(jid, name)
 }
 
 function getChatName(jid: string): string {
@@ -359,8 +391,11 @@ async function replyScan(chatJid: string, args: string[]) {
   const totalMsgs = results.reduce((s, r) => s + r.messages_scanned, 0)
 
   if (totalItems === 0) {
+    const noMsgNote = totalMsgs === 0
+      ? '\n\n_No messages stored yet. The bot only captures messages received after monitoring starts — send or receive a message in this chat first._'
+      : ''
     await sendDirectMessage(chatJid,
-      `📋 *Scan Results* — ${chatLabel}\n📅 ${new Date().toISOString().slice(0, 10)} | ⏰ Lookback: ${hourLabel} | Scanned: ${totalMsgs} messages\n\nNo actionable items found.`)
+      `📋 *Scan Results* — ${chatLabel}\n📅 ${new Date().toISOString().slice(0, 10)} | ⏰ Lookback: ${hourLabel} | Scanned: ${totalMsgs} messages\n\nNo actionable items found.${noMsgNote}`)
     return
   }
 

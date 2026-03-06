@@ -5,7 +5,7 @@ import { getDb, closeDb } from './storage'
 import { scanMonitoredChats, storeIncomingMessage } from './scanner'
 import { routeToProjectOps, testProjectOpsConnection } from './router'
 import { notifyHaley } from './notifier'
-import { handleCommand, isCommand, populateChatNames, setChatName } from './commands'
+import { handleCommand, isCommand, registerContactListeners, populateChatNames, setChatName } from './commands'
 
 const config = loadConfig()
 let cronTask: ReturnType<typeof cron.schedule> | null = null
@@ -22,6 +22,10 @@ async function main() {
   // Connect to WhatsApp
   const sock = await connectToWhatsApp()
 
+  // Register contact listeners BEFORE connection opens
+  // so we catch contacts.upsert events during initial sync
+  registerContactListeners()
+
   // Wait for connection
   await new Promise<void>((resolve) => {
     sock.ev.on('connection.update', ({ connection }) => {
@@ -31,7 +35,7 @@ async function main() {
 
   console.log('\nConnected!')
 
-  // Populate chat name cache for command resolution
+  // Load persisted names + fetch group names
   await populateChatNames()
 
   // Test Project Ops connection
