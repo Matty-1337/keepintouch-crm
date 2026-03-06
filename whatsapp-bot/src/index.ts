@@ -51,7 +51,7 @@ async function main() {
       // Handle bot commands (from any chat)
       if (content && isCommand(content)) {
         const senderJid = msg.key.participant || msg.key.remoteJid || ''
-        handleCommand(chatJid, content, senderJid)
+        handleCommand(chatJid, content, senderJid, msg.key.fromMe === true)
         return
       }
 

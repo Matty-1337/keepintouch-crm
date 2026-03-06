@@ -46,17 +46,30 @@ const COMMANDS: Record<string, string> = {
 export async function handleCommand(
   chatJid: string,
   command: string,
-  senderJid: string
+  senderJid: string,
+  fromMe?: boolean
 ): Promise<void> {
   const config = loadConfig()
 
+  // Normalize JID comparison: extract phone number from any format
+  // Handles both standard (18323981541:XX@s.whatsapp.net) and LID (18323981541:12@lid.whatsapp.net)
+  const extractPhone = (jid: string) => jid?.split('@')[0]?.split(':')[0] || ''
+
+  const senderPhone = extractPhone(senderJid)
+  const haleyPhone = extractPhone(config.haleyWhatsAppJid)
+
   const isAuthorized =
     senderJid === config.haleyWhatsAppJid ||
-    chatJid === config.haleyWhatsAppJid
+    chatJid === config.haleyWhatsAppJid ||
+    (senderPhone && haleyPhone && senderPhone === haleyPhone)
 
+  // Check if message is from the bot's own account
   const sock = getSocket()
   const myJid = sock?.user?.id
-  const isFromMe = myJid && (senderJid === myJid || senderJid?.includes(myJid.split(':')[0]))
+  const myPhone = myJid ? extractPhone(myJid) : ''
+  const isFromMe = fromMe === true ||
+    (myJid && senderJid === myJid) ||
+    (myPhone && senderPhone && myPhone === senderPhone)
 
   if (!isAuthorized && !isFromMe) return
 
