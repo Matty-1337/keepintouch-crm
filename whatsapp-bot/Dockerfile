@@ -2,6 +2,10 @@ FROM node:20-slim
 
 WORKDIR /app
 
+# Copy entrypoint early to avoid cache issues
+COPY entrypoint.sh ./
+RUN chmod +x entrypoint.sh
+
 # Install ALL dependencies (including devDeps for build)
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -14,9 +18,4 @@ RUN npx tsc
 # Remove dev dependencies after build
 RUN npm prune --omit=dev
 
-# Copy entrypoint
-COPY entrypoint.sh ./
-RUN chmod +x entrypoint.sh
-
-# Entrypoint
 CMD ["./entrypoint.sh"]
