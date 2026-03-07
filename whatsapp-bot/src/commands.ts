@@ -57,6 +57,10 @@ export function registerContactListeners(): void {
 
   sock.ev.on('contacts.upsert', (contacts) => {
     console.log(`[Contacts] Received ${contacts.length} contact(s) from upsert`)
+    // Log first few contacts to see what fields are available
+    for (const c of contacts.slice(0, 3)) {
+      console.log(`[Contacts]   sample: id=${c.id} lid=${(c as any).lid} name=${c.name || c.notify || c.verifiedName || 'none'}`)
+    }
     contacts.forEach(cacheContact)
   })
   sock.ev.on('contacts.update', (contacts) => {
@@ -100,7 +104,6 @@ export async function populateChatNames(): Promise<void> {
   } catch {}
 
   // Try to build LID mappings for monitored DM chats
-  // Use onWhatsApp to verify phone numbers and get their LIDs
   try {
     const cfg = loadConfig()
     const dmChats = cfg.monitoredChats.filter((jid: string) => jid.endsWith('@s.whatsapp.net'))
@@ -111,10 +114,11 @@ export async function populateChatNames(): Promise<void> {
         for (const result of results) {
           if (result.exists && result.jid) {
             const phoneJid = result.jid.split(':')[0] + '@s.whatsapp.net'
+            console.log(`[Contacts] onWhatsApp result: jid=${result.jid} lid=${(result as any).lid || 'none'} keys=${Object.keys(result).join(',')}`)
             if ((result as any).lid) {
               const lidJid = (result as any).lid.split(':')[0] + '@lid'
               saveJidMapping(lidJid, phoneJid)
-              console.log(`[Contacts] LID mapping from onWhatsApp: ${lidJid} -> ${phoneJid}`)
+              console.log(`[Contacts] LID mapping: ${lidJid} -> ${phoneJid}`)
             }
           }
         }
