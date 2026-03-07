@@ -68,6 +68,39 @@ export function registerContactListeners(): void {
   })
 }
 
+// Build LID mappings from env var: LID_MAPPINGS="lid1=phone1,lid2=phone2"
+export function loadLidMappingsFromEnv(): void {
+  const mappings = process.env.LID_MAPPINGS || ''
+  if (!mappings) return
+  for (const pair of mappings.split(',')) {
+    const [lid, phone] = pair.trim().split('=')
+    if (lid && phone) {
+      const lidJid = lid.includes('@') ? lid : lid + '@lid'
+      const phoneJid = phone.includes('@') ? phone : phone + '@s.whatsapp.net'
+      saveJidMapping(lidJid, phoneJid)
+      console.log(`[Contacts] LID mapping from env: ${lidJid} -> ${phoneJid}`)
+    }
+  }
+}
+
+// Auto-detect LID mapping: when a message from a contact arrives with pushName,
+// fuzzy match against monitored chat names to establish the mapping
+export function tryAutoMapLid(lidJid: string, pushName: string): void {
+  if (!lidJid.endsWith('@lid') || !pushName) return
+  const config = loadConfig()
+
+  // Check if pushName matches any monitored DM contact's cached name
+  for (const monJid of config.monitoredChats) {
+    if (!monJid.endsWith('@s.whatsapp.net')) continue
+    const cachedName = chatNameCache.get(monJid)
+    if (cachedName && cachedName.toLowerCase().includes(pushName.toLowerCase())) {
+      saveJidMapping(lidJid, monJid)
+      console.log(`[Contacts] Auto-mapped LID from pushName: ${lidJid} -> ${monJid} (name: ${pushName})`)
+      return
+    }
+  }
+}
+
 // Call AFTER connecting — fetches group names, loads persisted names, seeds JID mappings
 export async function populateChatNames(): Promise<void> {
   // Load persisted names from SQLite first
@@ -102,6 +135,9 @@ export async function populateChatNames(): Promise<void> {
       }
     }
   } catch {}
+
+  // Load manual LID mappings from env var
+  loadLidMappingsFromEnv()
 
   // Try to build LID mappings for monitored DM chats
   try {

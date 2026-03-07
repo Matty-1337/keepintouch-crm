@@ -5,7 +5,7 @@ import { getDb, closeDb, resolveJid, saveJidMapping } from './storage'
 import { scanMonitoredChats, storeIncomingMessage } from './scanner'
 import { routeToProjectOps, testProjectOpsConnection } from './router'
 import { notifyHaley } from './notifier'
-import { handleCommand, isCommand, registerContactListeners, populateChatNames, setChatName } from './commands'
+import { handleCommand, isCommand, registerContactListeners, populateChatNames, setChatName, tryAutoMapLid } from './commands'
 
 const config = loadConfig()
 let cronTask: ReturnType<typeof cron.schedule> | null = null
@@ -50,13 +50,28 @@ async function main() {
         console.log(`[Message] from=${msg.key.fromMe ? 'me' : (msg.pushName || 'unknown')} chat=${rawChatJid.slice(0, 20)}${resolvedNote} content=${content?.slice(0, 50) || '(media)'}`)
       }
 
-      // Cache DM contact names from pushName
+      // Cache DM contact names from pushName + auto-detect LID mappings
       if (msg.pushName && !msg.key.fromMe) {
         if (chatJid.endsWith('@s.whatsapp.net')) {
           setChatName(chatJid, msg.pushName)
         }
         if (rawChatJid.endsWith('@lid')) {
           setChatName(rawChatJid, msg.pushName)
+          // Try to auto-map this LID to a monitored phone JID
+          if (!wasResolved) {
+            tryAutoMapLid(rawChatJid, msg.pushName)
+            // Re-resolve after potential mapping
+            const newResolved = resolveJid(rawChatJid)
+            if (newResolved !== rawChatJid) {
+              // Re-run with resolved JID — store the message
+              if (config.monitoredChats.includes(newResolved)) {
+                console.log(`[Message] Auto-resolved ${rawChatJid} -> ${newResolved}, storing message`)
+                const msgToStore = { ...msg, key: { ...msg.key, remoteJid: newResolved } }
+                storeIncomingMessage(msgToStore)
+              }
+              return
+            }
+          }
         }
       }
 
