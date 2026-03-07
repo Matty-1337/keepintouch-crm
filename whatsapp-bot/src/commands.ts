@@ -9,6 +9,8 @@ import {
   getDb,
   saveChatName,
   loadChatNames,
+  saveJidMapping,
+  resolveJid,
 } from './storage'
 import { scanMonitoredChats } from './scanner'
 import { routeToProjectOps } from './router'
@@ -33,11 +35,23 @@ export function registerContactListeners(): void {
     if (c.lid) {
       chatNameCache.set(c.lid, name)
       saveChatName(c.lid, name)
+      // Save LID <-> phone JID mapping
+      if (c.id) {
+        const phoneJid = c.id.split(':')[0] + '@s.whatsapp.net'
+        const lidJid = c.lid.split(':')[0] + '@lid'
+        saveJidMapping(lidJid, phoneJid)
+        saveJidMapping(c.lid, c.id) // also map the full versioned JIDs
+      }
     }
     if (c.phoneNumber) {
       const pnJid = c.phoneNumber.replace(/\+/g, '') + '@s.whatsapp.net'
       chatNameCache.set(pnJid, name)
       saveChatName(pnJid, name)
+      // Save LID mapping if we have it
+      if (c.lid) {
+        const lidJid = c.lid.split(':')[0] + '@lid'
+        saveJidMapping(lidJid, pnJid)
+      }
     }
   }
 
@@ -50,7 +64,7 @@ export function registerContactListeners(): void {
   })
 }
 
-// Call AFTER connecting — fetches group names and loads persisted names
+// Call AFTER connecting — fetches group names, loads persisted names, seeds JID mappings
 export async function populateChatNames(): Promise<void> {
   // Load persisted names from SQLite first
   const persisted = loadChatNames()
@@ -61,6 +75,16 @@ export async function populateChatNames(): Promise<void> {
 
   const sock = getSocket()
   if (!sock) return
+
+  // Seed own LID <-> phone JID mapping from sock.user
+  const me = sock.user
+  if (me?.id && me?.lid) {
+    const myPhone = me.id.split(':')[0] + '@s.whatsapp.net'
+    const myLid = me.lid.split(':')[0] + '@lid'
+    saveJidMapping(myLid, myPhone)
+    saveJidMapping(me.lid, me.id)
+    console.log(`[Contacts] Own JID mapping: ${myLid} -> ${myPhone}`)
+  }
 
   // Fetch group names
   try {
@@ -74,6 +98,31 @@ export async function populateChatNames(): Promise<void> {
       }
     }
   } catch {}
+
+  // Try to build LID mappings for monitored DM chats
+  // Use onWhatsApp to verify phone numbers and get their LIDs
+  try {
+    const cfg = loadConfig()
+    const dmChats = cfg.monitoredChats.filter((jid: string) => jid.endsWith('@s.whatsapp.net'))
+    if (dmChats.length > 0) {
+      const phoneNumbers = dmChats.map((jid: string) => jid.split('@')[0])
+      const results = await sock.onWhatsApp(...phoneNumbers)
+      if (results) {
+        for (const result of results) {
+          if (result.exists && result.jid) {
+            const phoneJid = result.jid.split(':')[0] + '@s.whatsapp.net'
+            if ((result as any).lid) {
+              const lidJid = (result as any).lid.split(':')[0] + '@lid'
+              saveJidMapping(lidJid, phoneJid)
+              console.log(`[Contacts] LID mapping from onWhatsApp: ${lidJid} -> ${phoneJid}`)
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.log(`[Contacts] onWhatsApp lookup skipped: ${(err as Error).message}`)
+  }
 }
 
 export function setChatName(jid: string, name: string): void {

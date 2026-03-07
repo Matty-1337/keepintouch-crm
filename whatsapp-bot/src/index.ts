@@ -1,7 +1,7 @@
 import cron from 'node-cron'
 import { connectToWhatsApp, onNewMessage, onSocketCreated, closeSocket } from './connection'
 import { loadConfig } from './config'
-import { getDb, closeDb } from './storage'
+import { getDb, closeDb, resolveJid, saveJidMapping } from './storage'
 import { scanMonitoredChats, storeIncomingMessage } from './scanner'
 import { routeToProjectOps, testProjectOpsConnection } from './router'
 import { notifyHaley } from './notifier'
@@ -32,8 +32,12 @@ async function main() {
   // type: 'notify' = real-time, 'append' = pushed from phone, 'history' = history sync
   onNewMessage((msg, type) => {
     try {
-      const chatJid = msg.key.remoteJid
-      if (!chatJid) return
+      const rawChatJid = msg.key.remoteJid
+      if (!rawChatJid) return
+
+      // Resolve LID JIDs to phone number JIDs for matching monitored chats
+      const chatJid = resolveJid(rawChatJid)
+      const wasResolved = chatJid !== rawChatJid
 
       const content =
         msg.message?.conversation ||
@@ -42,12 +46,18 @@ async function main() {
 
       // Only log real-time messages in detail (history can be noisy)
       if (type === 'notify') {
-        console.log(`[Message] from=${msg.key.fromMe ? 'me' : (msg.pushName || 'unknown')} chat=${chatJid.slice(0, 20)} content=${content?.slice(0, 50) || '(media)'}`)
+        const resolvedNote = wasResolved ? ` -> ${chatJid.slice(0, 20)}` : ''
+        console.log(`[Message] from=${msg.key.fromMe ? 'me' : (msg.pushName || 'unknown')} chat=${rawChatJid.slice(0, 20)}${resolvedNote} content=${content?.slice(0, 50) || '(media)'}`)
       }
 
       // Cache DM contact names from pushName
-      if (msg.pushName && chatJid.endsWith('@s.whatsapp.net') && !msg.key.fromMe) {
-        setChatName(chatJid, msg.pushName)
+      if (msg.pushName && !msg.key.fromMe) {
+        if (chatJid.endsWith('@s.whatsapp.net')) {
+          setChatName(chatJid, msg.pushName)
+        }
+        if (rawChatJid.endsWith('@lid')) {
+          setChatName(rawChatJid, msg.pushName)
+        }
       }
 
       // Handle bot commands ONLY from real-time messages (not history)
@@ -59,8 +69,16 @@ async function main() {
       }
 
       // Store messages from monitored chats (all types: real-time + history)
+      // Use the resolved phone JID for storage so scanner can find them
       if (config.monitoredChats.length === 0 || config.monitoredChats.includes(chatJid)) {
-        storeIncomingMessage(msg)
+        // Override remoteJid with resolved JID before storing
+        const msgToStore = wasResolved
+          ? { ...msg, key: { ...msg.key, remoteJid: chatJid } }
+          : msg
+        storeIncomingMessage(msgToStore)
+      } else if (rawChatJid.endsWith('@lid') && !wasResolved) {
+        // Unresolved LID — log it so we can see which chats are being missed
+        console.log(`[Message] Unresolved LID: ${rawChatJid} (not in monitored chats, no mapping found)`)
       }
     } catch (err) {
       console.error('[Message] Error processing message:', err)

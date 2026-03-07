@@ -70,11 +70,46 @@ function initSchema(): void {
       updated_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS jid_mappings (
+      lid TEXT PRIMARY KEY,
+      phone_jid TEXT NOT NULL,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_messages_processed ON messages(processed, chat_jid);
     CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
     CREATE INDEX IF NOT EXISTS idx_extracted_routed ON extracted_items(routed_to_projectops);
     CREATE INDEX IF NOT EXISTS idx_extracted_notified ON extracted_items(notified_haley);
+    CREATE INDEX IF NOT EXISTS idx_jid_mappings_phone ON jid_mappings(phone_jid);
   `)
+}
+
+export function saveJidMapping(lid: string, phoneJid: string): void {
+  const d = getDb()
+  d.prepare(`INSERT OR REPLACE INTO jid_mappings (lid, phone_jid, updated_at) VALUES (?, ?, datetime('now'))`).run(lid, phoneJid)
+}
+
+export function resolveJid(jid: string): string {
+  if (!jid.endsWith('@lid')) return jid
+  const d = getDb()
+  const row = d.prepare('SELECT phone_jid FROM jid_mappings WHERE lid = ?').get(jid) as any
+  return row?.phone_jid || jid
+}
+
+export function resolveLidFromPhone(phoneJid: string): string | null {
+  const d = getDb()
+  const row = d.prepare('SELECT lid FROM jid_mappings WHERE phone_jid = ?').get(phoneJid) as any
+  return row?.lid || null
+}
+
+export function loadAllJidMappings(): Map<string, string> {
+  const d = getDb()
+  const rows = d.prepare('SELECT lid, phone_jid FROM jid_mappings').all() as any[]
+  const map = new Map<string, string>()
+  for (const r of rows) {
+    map.set(r.lid, r.phone_jid)
+  }
+  return map
 }
 
 export function saveChatName(jid: string, name: string): void {
