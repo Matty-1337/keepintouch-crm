@@ -92,7 +92,7 @@ export async function extractItems(
     return validItems
   } catch (err) {
     console.error('[Extractor] AI extraction failed:', err)
-    return []
+    throw err // Let caller decide whether to mark messages as processed
   }
 }
 

@@ -87,12 +87,23 @@ async function scanChat(chatJid: string, lookbackHours: number): Promise<ScanRes
 
     console.log(`[Scanner] ${chatJid}: Processing ${messages.length} message(s)...`)
 
-    const items = await extractItems(messages, chatJid)
+    let items: Awaited<ReturnType<typeof extractItems>> = []
+    let extractionFailed = false
 
-    const messageIds = messages.map((m) => m.id)
-    markMessagesProcessed(messageIds)
+    try {
+      items = await extractItems(messages, chatJid)
+    } catch (err) {
+      extractionFailed = true
+      console.error(`[Scanner] ${chatJid}: Extraction failed, messages will be retried on next scan.`)
+    }
 
-    console.log(`[Scanner] ${chatJid}: Extracted ${items.length} item(s) from ${messages.length} message(s).`)
+    // Only mark messages as processed if extraction succeeded
+    if (!extractionFailed) {
+      const messageIds = messages.map((m) => m.id)
+      markMessagesProcessed(messageIds)
+    }
+
+    console.log(`[Scanner] ${chatJid}: Extracted ${items.length} item(s) from ${messages.length} message(s).${extractionFailed ? ' (AI FAILED — will retry)' : ''}`)
 
     return {
       chat_jid: chatJid,
@@ -100,7 +111,7 @@ async function scanChat(chatJid: string, lookbackHours: number): Promise<ScanRes
       items_extracted: items.length,
       scan_started_at: startedAt,
       scan_completed_at: new Date().toISOString(),
-      status: 'success',
+      status: extractionFailed ? 'error' : 'success',
     }
   } catch (err) {
     console.error(`[Scanner] Error scanning ${chatJid}:`, err)
