@@ -2,38 +2,53 @@ import { loadConfig } from './config'
 import { storeExtractedItem, isDuplicateItem } from './storage'
 import type { StoredMessage, ExtractedItem } from './types'
 
-const EXTRACTION_PROMPT = `You are an AI assistant that extracts actionable items from WhatsApp business conversations.
+const EXTRACTION_PROMPT = `You are an AI assistant that extracts actionable items from WhatsApp business conversations between Matt (CEO) and his team/vendors.
 
-Analyze the following conversation messages and extract any:
-- Tasks that need to be done
-- Follow-ups that were promised or requested
-- Action items assigned to someone
-- Reminders about deadlines or events
-- Important decisions that were made
+Analyze the conversation and extract ONLY genuinely actionable items. Be strict — quality over quantity.
 
-For each item found, provide a JSON array with objects containing:
-- item_type: one of "task", "follow_up", "action_item", "reminder", "decision"
-- title: brief summary (under 80 chars)
-- description: fuller context if needed (or null)
-- priority: "high", "medium", or "low"
-- due_date: ISO date string if mentioned (or null)
-- assigned_to: person's name if clear (default: "Haley Rodriguez")
-- source_context: the relevant quote from the conversation
+For each item, provide a JSON array with objects containing:
+- item_type: one of "task", "follow_up", "action_item", "reminder"
+- title: brief actionable summary (under 80 chars, start with a verb)
+- description: one sentence explaining WHO needs to do WHAT
+- who_acts: who needs to take the action — "Matt", the other person's name, or "Haily" for admin tasks
+- urgency: one of "urgent", "high", "normal", "low"
+  - "urgent": payment deadlines, expiring items, "ASAP", "immediately"
+  - "high": payments, approvals, finalize, important deliverables
+  - "normal": follow-ups, reviews, updates, general tasks
+  - "low": FYI, nice-to-have, informational
+- category: one of "Financial", "Follow-Up", "Scheduling", "Administrative", "Procurement", "Communication", "Research", "Project Support", "Personal", "General"
+  - Financial: payment, invoice, cost, budget, money, pricing
+  - Follow-Up: follow up, check in, update on, remind, status
+  - Scheduling: meeting, call, schedule, appointment
+  - Procurement: vendor, contractor, freelancer, hiring
+  - Administrative: document, file, report, proposal, contract
+  - Project Support: code, GitHub, deploy, build, app, dashboard, website, database
+  - Communication: email, message, contact, reach out, tell, share
+  - Research: research, look into, find out, compare
+  - Personal: personal, family, health, travel
+  - General: everything else
+- business_identity: if clearly about a specific brand, one of "HTX TAP", "CoreTAP", "AtlasTAP", "SignalTap", "LearnTAP", "Veritas Officiating Institute", or null
+- source_context: the relevant 1-2 line quote from the conversation (NEVER include passwords, API keys, tokens, login credentials, or secrets — redact or skip)
+- due_date: ISO date string ONLY if explicitly mentioned in conversation (or null)
 
-If no actionable items are found, return an empty array: []
+STRICT RULES — DO NOT extract:
+- Casual greetings, small talk, acknowledgments ("ok", "sure", "thanks", "yes")
+- Items already completed ("is done", "I already", "completed", "finished", "sent it")
+- Vague statements with no clear action ("we will optimize", "having confusion")
+- Pure decisions/statements that aren't tasks ("We will use Slack")
+- Near-duplicates — if two items have the same action, keep only the most specific one
+- Anything containing passwords, API keys, tokens, or credentials
 
-IMPORTANT: Only extract genuinely actionable items. Do NOT extract:
-- Casual greetings or small talk
-- Simple acknowledgments ("ok", "sure", "thanks")
-- Questions without action implications
-- Already-completed items
+Respond with ONLY a valid JSON array. No markdown, no explanation. Return [] if nothing actionable.`
 
-Respond with ONLY a valid JSON array. No markdown, no explanation.`
-
-interface ExtractionResult {
+export interface ExtractionResult {
   item_type: ExtractedItem['item_type']
   title: string
   description: string | null
+  who_acts: string
+  urgency: 'urgent' | 'high' | 'normal' | 'low'
+  category: string
+  business_identity: string | null
   priority: ExtractedItem['priority']
   due_date: string | null
   assigned_to: string
@@ -48,10 +63,9 @@ export async function extractItems(
 
   const config = loadConfig()
 
-  // Format messages for the AI prompt
   const conversationText = messages
     .map((m) => {
-      const sender = m.sender_name || (m.is_from_me ? 'Me' : 'Unknown')
+      const sender = m.sender_name || (m.is_from_me ? 'Matt' : 'Unknown')
       const time = new Date(m.timestamp * 1000).toLocaleString()
       return `[${time}] ${sender}: ${m.content}`
     })
@@ -62,37 +76,55 @@ export async function extractItems(
   try {
     const rawItems = await callAI(config, userPrompt)
     const validItems: ExtractionResult[] = []
+    const seenTitles = new Set<string>()
 
     for (const item of rawItems) {
-      // Validate item structure
       if (!item.title || !item.item_type) continue
+      if (item.item_type === 'decision') continue // Skip pure decisions
 
-      // Check for duplicates
+      // Deduplicate within this batch
+      const normalizedTitle = item.title.toLowerCase().replace(/[^a-z0-9]/g, '')
+      if (seenTitles.has(normalizedTitle)) continue
+      seenTitles.add(normalizedTitle)
+
+      // Check for duplicates in DB
       if (isDuplicateItem(chatJid, item.title)) {
         console.log(`[Extractor] Skipping duplicate: "${item.title}"`)
         continue
       }
 
-      // Store in database
+      // Map urgency to legacy priority field for local storage
+      const legacyPriority = item.urgency === 'urgent' ? 'high' : (item.urgency || 'medium') as ExtractedItem['priority']
+
+      const enrichedItem: ExtractionResult = {
+        ...item,
+        priority: legacyPriority,
+        who_acts: item.who_acts || 'Haily',
+        urgency: item.urgency || 'normal',
+        category: item.category || 'General',
+        business_identity: item.business_identity || null,
+        assigned_to: item.assigned_to || 'Haley Rodriguez',
+      }
+
       storeExtractedItem({
         message_id: messages[0].id,
         chat_jid: chatJid,
         item_type: item.item_type,
         title: item.title,
         description: item.description || null,
-        priority: item.priority || 'medium',
+        priority: legacyPriority,
         due_date: item.due_date || null,
         assigned_to: item.assigned_to || 'Haley Rodriguez',
         source_context: item.source_context || null,
       })
 
-      validItems.push(item)
+      validItems.push(enrichedItem)
     }
 
     return validItems
   } catch (err) {
     console.error('[Extractor] AI extraction failed:', err)
-    throw err // Let caller decide whether to mark messages as processed
+    throw err
   }
 }
 
@@ -100,7 +132,6 @@ async function callAI(
   config: ReturnType<typeof loadConfig>,
   userPrompt: string
 ): Promise<ExtractionResult[]> {
-  // Try OpenRouter first, then Anthropic fallback
   if (config.openrouterApiKey) {
     try {
       return await callOpenRouter(config, userPrompt)
@@ -133,18 +164,16 @@ async function callOpenRouter(
         { role: 'user', content: userPrompt },
       ],
       temperature: 0.1,
-      max_tokens: 2000,
+      max_tokens: 3000,
     }),
   })
 
   if (!response.ok) {
-    const errText = await response.text()
-    // Try fallback model
     if (config.openrouterFallbackModel) {
       console.warn(`[Extractor] Primary model failed (${response.status}), trying fallback model...`)
       return await callOpenRouterWithModel(config, config.openrouterFallbackModel, userPrompt)
     }
-    throw new Error(`OpenRouter API error ${response.status}: ${errText}`)
+    throw new Error(`OpenRouter API error ${response.status}: ${await response.text()}`)
   }
 
   const data = (await response.json()) as any
@@ -170,7 +199,7 @@ async function callOpenRouterWithModel(
         { role: 'user', content: userPrompt },
       ],
       temperature: 0.1,
-      max_tokens: 2000,
+      max_tokens: 3000,
     }),
   })
 
@@ -196,7 +225,7 @@ async function callAnthropic(
     },
     body: JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 2000,
+      max_tokens: 3000,
       system: EXTRACTION_PROMPT,
       messages: [{ role: 'user', content: userPrompt }],
       temperature: 0.1,
@@ -213,7 +242,6 @@ async function callAnthropic(
 }
 
 function parseAIResponse(content: string): ExtractionResult[] {
-  // Strip markdown code fences if present
   let cleaned = content.trim()
   if (cleaned.startsWith('```')) {
     cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
@@ -227,7 +255,7 @@ function parseAIResponse(content: string): ExtractionResult[] {
       (item: any) =>
         item &&
         typeof item.title === 'string' &&
-        ['task', 'follow_up', 'action_item', 'reminder', 'decision'].includes(item.item_type)
+        ['task', 'follow_up', 'action_item', 'reminder'].includes(item.item_type)
     )
   } catch (err) {
     console.error('[Extractor] Failed to parse AI response:', cleaned.slice(0, 200))

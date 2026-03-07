@@ -1,8 +1,8 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import { loadConfig } from './config'
 import { getUnroutedItems, markItemRouted } from './storage'
+import type { ExtractionResult } from './extractor'
 
-// Project Ops profile UUIDs
 const HAILY_PROFILE_ID = '754954b4-2c7c-4c14-86ee-f81943098f26'
 const CEO_PROFILE_ID = '6d8b760d-af8a-4755-8236-9cf364264498'
 
@@ -20,24 +20,151 @@ function getSupabase(): SupabaseClient | null {
   return supabase
 }
 
-function mapPriority(priority: string): string {
-  switch (priority) {
+// Valid categories per DB CHECK constraint
+const VALID_CATEGORIES = [
+  'Communication', 'Follow-Up', 'Research', 'Scheduling',
+  'Administrative', 'Procurement', 'Financial', 'Project Support',
+  'Personal', 'General',
+]
+
+function mapCategory(item: any): string {
+  // Use AI-provided category if valid
+  if (item.category && VALID_CATEGORIES.includes(item.category)) {
+    return item.category
+  }
+
+  // Fallback: keyword-based categorization from title + description
+  const text = `${item.title} ${item.description || ''} ${item.source_context || ''}`.toLowerCase()
+
+  if (/payment|invoice|cost|budget|money|pricing|pay|financial/.test(text)) return 'Financial'
+  if (/follow.?up|check.?in|update.?on|remind|status/.test(text)) return 'Follow-Up'
+  if (/meeting|call|schedule|appointment|calendar/.test(text)) return 'Scheduling'
+  if (/vendor|contractor|freelancer|hiring|recruit/.test(text)) return 'Procurement'
+  if (/document|file|report|proposal|contract|pdf/.test(text)) return 'Administrative'
+  if (/code|github|deploy|build|app|dashboard|website|database|api|server/.test(text)) return 'Project Support'
+  if (/email|message|contact|reach.?out|tell|share|send/.test(text)) return 'Communication'
+  if (/research|look.?into|find.?out|compare|investigate/.test(text)) return 'Research'
+  if (/personal|family|health|travel/.test(text)) return 'Personal'
+
+  // Map by item_type as last resort
+  if (item.item_type === 'follow_up') return 'Follow-Up'
+  if (item.item_type === 'reminder') return 'Scheduling'
+
+  return 'General'
+}
+
+function mapPriority(item: any): string {
+  // Use AI-provided urgency if available
+  const urgency = item.urgency || item.priority || 'normal'
+
+  // Check for urgent keywords in content
+  const text = `${item.title} ${item.description || ''} ${item.source_context || ''}`.toLowerCase()
+  if (/asap|urgent|immediately|deadline|expir/.test(text)) return 'Urgent'
+
+  switch (urgency) {
+    case 'urgent': return 'Urgent'
     case 'high': return 'High'
-    case 'medium': return 'Normal'
+    case 'medium':
+    case 'normal': return 'Normal'
     case 'low': return 'Low'
     default: return 'Normal'
   }
 }
 
-function mapCategory(itemType: string): string {
-  switch (itemType) {
-    case 'task': return 'General'
-    case 'follow_up': return 'Follow-Up'
-    case 'action_item': return 'General'
-    case 'reminder': return 'Administrative'
-    case 'decision': return 'General'
-    default: return 'General'
+function computeDueDate(item: any): string {
+  // If AI extracted an explicit due date, use it
+  if (item.due_date) return item.due_date
+
+  const now = new Date()
+  const text = `${item.title} ${item.description || ''} ${item.source_context || ''}`.toLowerCase()
+  const priority = mapPriority(item)
+
+  // Urgent / payment / deadline → today
+  if (priority === 'Urgent' || /payment|pay now|deadline|expir/.test(text)) {
+    return formatDate(now)
   }
+
+  // High priority → tomorrow
+  if (priority === 'High') {
+    return formatDate(addDays(now, 1))
+  }
+
+  // Follow-ups → 2 days
+  if (item.item_type === 'follow_up' || /follow.?up|check.?in|remind/.test(text)) {
+    return formatDate(addDays(now, 2))
+  }
+
+  // Normal tasks → tomorrow
+  if (item.item_type === 'task' || item.item_type === 'action_item') {
+    return formatDate(addDays(now, 1))
+  }
+
+  // Everything else → next Monday or 3 days, whichever is sooner
+  const threeDays = addDays(now, 3)
+  const nextMonday = getNextMonday(now)
+  return formatDate(threeDays < nextMonday ? threeDays : nextMonday)
+}
+
+function addDays(date: Date, days: number): Date {
+  const result = new Date(date)
+  result.setDate(result.getDate() + days)
+  return result
+}
+
+function getNextMonday(date: Date): Date {
+  const result = new Date(date)
+  const day = result.getDay()
+  const daysUntilMonday = day === 0 ? 1 : (8 - day)
+  result.setDate(result.getDate() + daysUntilMonday)
+  return result
+}
+
+function formatDate(date: Date): string {
+  return date.toISOString().split('T')[0]
+}
+
+function getChatDisplayName(chatJid: string): string {
+  // Extract phone number from JID
+  const phone = chatJid.split('@')[0]
+  return phone
+}
+
+function buildDescription(item: any, chatJid: string): string {
+  const who = item.who_acts || 'Haily'
+  const desc = item.description || item.title
+  const chatName = getChatDisplayName(chatJid)
+  const extractedAt = item.created_at || new Date().toISOString().replace('T', ' ').slice(0, 19)
+
+  const parts: string[] = []
+
+  // WHO: Action statement
+  parts.push(`${who}: ${desc}`)
+  parts.push('')
+
+  // Source info
+  parts.push(`Source: WhatsApp with ${chatName}`)
+  parts.push(`Extracted: ${extractedAt}`)
+
+  // Context quote
+  if (item.source_context) {
+    parts.push('')
+    parts.push('Context:')
+    parts.push(`> ${item.source_context}`)
+  }
+
+  // Action for Haily
+  parts.push('')
+  parts.push('Action for Haily:')
+
+  if (who === 'Matt' || who.toLowerCase() === 'matty') {
+    parts.push(`- Schedule this for Matt. Add to Reclaim calendar by due date.`)
+  } else if (who === 'Haily' || who === 'Haley Rodriguez') {
+    parts.push(`- Complete this directly. Update status when done.`)
+  } else {
+    parts.push(`- Follow up with ${who} about this. Remind them if no response by due date.`)
+  }
+
+  return parts.join('\n')
 }
 
 export async function routeToProjectOps(): Promise<number> {
@@ -46,23 +173,22 @@ export async function routeToProjectOps(): Promise<number> {
 
   const sb = getSupabase()
   if (!sb) {
-    console.warn('[Router] Supabase not configured (SUPABASE_URL / SUPABASE_SERVICE_KEY missing). Storing locally only.')
+    console.warn('[Router] Supabase not configured. Storing locally only.')
     for (const item of items) {
       markItemRouted(item.id, 'local-only')
     }
     return 0
   }
 
-  console.log(`[Router] Routing ${items.length} item(s) to Project Ops via Supabase...`)
+  console.log(`[Router] Routing ${items.length} item(s) to Project Ops...`)
   let routed = 0
 
   for (const item of items) {
     try {
-      const taskId = await insertTask(sb, item)
-      await insertHailyDirective(sb, item, taskId)
-      markItemRouted(item.id, taskId)
+      const id = await insertDirective(sb, item)
+      markItemRouted(item.id, id)
       routed++
-      console.log(`[Router] Created task + directive: "${item.title}" (${taskId})`)
+      console.log(`[Router] Created directive: "${item.title}" (${id}) due=${computeDueDate(item)} cat=${mapCategory(item)}`)
     } catch (err) {
       console.error(`[Router] Failed to route item ${item.id}:`, err)
       markItemRouted(item.id, 'route-failed')
@@ -73,101 +199,32 @@ export async function routeToProjectOps(): Promise<number> {
   return routed
 }
 
-async function insertTask(sb: SupabaseClient, item: any): Promise<string> {
-  const { data, error } = await sb
-    .from('haily_directives')
-    .select('id')
-    .limit(0)
+async function insertDirective(sb: SupabaseClient, item: any): Promise<string> {
+  const category = mapCategory(item)
+  const priority = mapPriority(item)
+  const dueDate = computeDueDate(item)
 
-  // Insert into the tasks table
-  const taskRow = {
+  const row = {
     title: item.title,
-    description: buildTaskDescription(item),
+    description: buildDescription(item, item.chat_jid),
+    category,
+    subcategory: `WhatsApp ${(item.item_type || 'task').replace('_', ' ')}`,
+    priority,
     status: 'New',
-    priority: mapPriority(item.priority),
-    category: mapCategory(item.item_type),
-    subcategory: `WhatsApp ${item.item_type.replace('_', ' ')}`,
-    assigned_to: HAILY_PROFILE_ID,
+    due_date: dueDate,
     created_by: CEO_PROFILE_ID,
-    due_date: item.due_date || null,
-    archived: false,
-    instructions: item.source_context
-      ? `Source context from WhatsApp:\n> ${item.source_context}`
-      : null,
-    success_criteria: null,
-    estimated_minutes: null,
+    assigned_to: HAILY_PROFILE_ID,
+    business_identity: item.business_identity || null,
   }
 
-  const { data: inserted, error: insertErr } = await sb
+  const { data, error } = await sb
     .from('haily_directives')
-    .insert(taskRow)
+    .insert(row)
     .select('id')
     .single()
 
-  if (insertErr) throw new Error(`Task insert failed: ${insertErr.message}`)
-  return inserted.id
-}
-
-async function insertHailyDirective(
-  sb: SupabaseClient,
-  item: any,
-  linkedTaskId: string
-): Promise<void> {
-  const directiveRow = {
-    title: item.title,
-    description: buildDirectiveDescription(item),
-    category: mapCategory(item.item_type),
-    priority: mapPriority(item.priority),
-    status: 'New',
-    created_by: CEO_PROFILE_ID,
-    assigned_to: HAILY_PROFILE_ID,
-    due_date: item.due_date || null,
-    linked_task_id: linkedTaskId,
-    instructions: item.source_context
-      ? `From WhatsApp conversation:\n> ${item.source_context}`
-      : null,
-    success_criteria: `Complete the ${item.item_type.replace('_', ' ')} extracted from WhatsApp`,
-  }
-
-  const { error } = await sb
-    .from('haily_directives')
-    .insert(directiveRow)
-
-  if (error) {
-    console.warn(`[Router] Directive insert warning: ${error.message}`)
-  }
-}
-
-function buildTaskDescription(item: any): string {
-  const parts: string[] = []
-
-  if (item.description) parts.push(item.description)
-
-  parts.push(`\n---`)
-  parts.push(`Extracted by KIT WhatsApp Bot`)
-  parts.push(`Source: WhatsApp conversation (${item.chat_jid})`)
-  parts.push(`Type: ${item.item_type}`)
-  parts.push(`Extracted at: ${item.created_at}`)
-
-  if (item.source_context) {
-    parts.push(`\nContext:\n> ${item.source_context}`)
-  }
-
-  return parts.join('\n')
-}
-
-function buildDirectiveDescription(item: any): string {
-  const parts: string[] = []
-
-  if (item.description) parts.push(item.description)
-
-  parts.push(`\nThis ${item.item_type.replace('_', ' ')} was automatically extracted from a WhatsApp conversation by the KIT Bot.`)
-
-  if (item.source_context) {
-    parts.push(`\nOriginal context:\n> ${item.source_context}`)
-  }
-
-  return parts.join('\n')
+  if (error) throw new Error(`Directive insert failed: ${error.message}`)
+  return data.id
 }
 
 export async function testProjectOpsConnection(): Promise<boolean> {
