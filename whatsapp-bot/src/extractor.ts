@@ -116,6 +116,10 @@ export async function extractItems(
         due_date: item.due_date || null,
         assigned_to: item.assigned_to || 'Haley Rodriguez',
         source_context: item.source_context || null,
+        who_acts: item.who_acts || 'Haily',
+        urgency: item.urgency || 'normal',
+        category: item.category || 'General',
+        business_identity: item.business_identity || null,
       })
 
       validItems.push(enrichedItem)

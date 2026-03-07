@@ -8,6 +8,10 @@ export interface ExtractedItem {
   due_date: string | null
   assigned_to: string
   source_context: string | null
+  who_acts: string
+  urgency: 'urgent' | 'high' | 'normal' | 'low'
+  category: string
+  business_identity: string | null
   routed_to_projectops: boolean
   notified_haley: boolean
 }

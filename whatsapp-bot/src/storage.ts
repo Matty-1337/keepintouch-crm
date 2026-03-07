@@ -82,6 +82,17 @@ function initSchema(): void {
     CREATE INDEX IF NOT EXISTS idx_extracted_notified ON extracted_items(notified_haley);
     CREATE INDEX IF NOT EXISTS idx_jid_mappings_phone ON jid_mappings(phone_jid);
   `)
+
+  // Migrate: add columns for smart assignment (safe to run on existing DBs)
+  const migrations = [
+    `ALTER TABLE extracted_items ADD COLUMN who_acts TEXT DEFAULT 'Haily'`,
+    `ALTER TABLE extracted_items ADD COLUMN urgency TEXT DEFAULT 'normal'`,
+    `ALTER TABLE extracted_items ADD COLUMN category TEXT DEFAULT 'General'`,
+    `ALTER TABLE extracted_items ADD COLUMN business_identity TEXT`,
+  ]
+  for (const sql of migrations) {
+    try { d.exec(sql) } catch (_) { /* column already exists */ }
+  }
 }
 
 export function saveJidMapping(lid: string, phoneJid: string): void {
@@ -165,12 +176,13 @@ export function markMessagesProcessed(messageIds: string[]): void {
 export function storeExtractedItem(item: Omit<ExtractedItem, 'routed_to_projectops' | 'notified_haley'>): number {
   const d = getDb()
   const result = d.prepare(`
-    INSERT INTO extracted_items (message_id, chat_jid, item_type, title, description, priority, due_date, assigned_to, source_context)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO extracted_items (message_id, chat_jid, item_type, title, description, priority, due_date, assigned_to, source_context, who_acts, urgency, category, business_identity)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     item.message_id, item.chat_jid, item.item_type, item.title,
     item.description, item.priority, item.due_date, item.assigned_to,
-    item.source_context
+    item.source_context, item.who_acts || 'Haily', item.urgency || 'normal',
+    item.category || 'General', item.business_identity || null
   )
   return result.lastInsertRowid as number
 }
