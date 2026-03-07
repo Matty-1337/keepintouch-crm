@@ -1,9 +1,11 @@
 import { loadConfig } from './config'
+import { getSocket } from './connection'
 import {
   storeMessage,
   getUnprocessedMessages,
   markMessagesProcessed,
   logScan,
+  getDb,
 } from './storage'
 import { extractItems } from './extractor'
 import type { ScanResult } from './types'
@@ -41,10 +43,38 @@ async function scanChat(chatJid: string, lookbackHours: number): Promise<ScanRes
   const sinceTimestamp = Math.floor((Date.now() - lookbackHours * 60 * 60 * 1000) / 1000)
 
   try {
-    const messages = getUnprocessedMessages(chatJid, sinceTimestamp)
+    let messages = getUnprocessedMessages(chatJid, sinceTimestamp)
+
+    // If no messages stored, try requesting on-demand history from WhatsApp
+    if (messages.length === 0) {
+      const totalStored = (getDb().prepare('SELECT COUNT(*) as count FROM messages WHERE chat_jid = ?').get(chatJid) as any)?.count || 0
+      if (totalStored === 0) {
+        console.log(`[Scanner] ${chatJid}: No messages stored. Requesting on-demand history...`)
+        try {
+          const sock = getSocket()
+          if (sock && (sock as any).fetchMessageHistory) {
+            // Request 50 recent messages; use a synthetic anchor at current time
+            await (sock as any).fetchMessageHistory(50, {
+              remoteJid: chatJid,
+              fromMe: false,
+              id: '',
+            }, Date.now())
+            // Wait for history sync response to arrive and be stored
+            await new Promise(resolve => setTimeout(resolve, 5000))
+            // Re-check for messages
+            messages = getUnprocessedMessages(chatJid, sinceTimestamp)
+            if (messages.length > 0) {
+              console.log(`[Scanner] ${chatJid}: History sync delivered ${messages.length} message(s).`)
+            }
+          }
+        } catch (err) {
+          console.log(`[Scanner] ${chatJid}: On-demand history fetch not available: ${(err as Error).message}`)
+        }
+      }
+    }
 
     if (messages.length === 0) {
-      console.log(`[Scanner] ${chatJid}: No unprocessed messages (bot only captures messages received after monitoring starts).`)
+      console.log(`[Scanner] ${chatJid}: No unprocessed messages.`)
       return {
         chat_jid: chatJid,
         messages_scanned: 0,

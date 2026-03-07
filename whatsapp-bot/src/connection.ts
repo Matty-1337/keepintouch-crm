@@ -35,7 +35,7 @@ const MAX_RECONNECT_ATTEMPTS = 20
 const MAX_BACKOFF_MS = 60000
 
 // Persistent callbacks — survive socket reconnections
-const messageCallbacks: Array<(msg: any) => void> = []
+const messageCallbacks: Array<(msg: any, type: string) => void> = []
 const socketReadyCallbacks: Array<(sock: WASocket) => void> = []
 
 export function getUptime(): number {
@@ -59,12 +59,24 @@ export async function connectToWhatsApp(): Promise<WASocket> {
   sock.ev.on('creds.update', saveCreds)
 
   // Re-register persistent message handler on every new socket
+  // Handle both 'notify' (real-time) and 'append' (history sync) messages
   sock.ev.on('messages.upsert', ({ messages, type }) => {
-    if (type !== 'notify') return
     for (const msg of messages) {
       if (!msg.message) continue
       for (const cb of messageCallbacks) {
-        cb(msg)
+        cb(msg, type)
+      }
+    }
+  })
+
+  // Handle history sync messages (initial sync + on-demand requests)
+  sock.ev.on('messaging-history.set', ({ messages }) => {
+    if (messages.length === 0) return
+    console.log(`[HistorySync] Received ${messages.length} historical message(s)`)
+    for (const msg of messages) {
+      if (!msg.message) continue
+      for (const cb of messageCallbacks) {
+        cb(msg, 'history')
       }
     }
   })
@@ -165,7 +177,7 @@ export async function closeSocket(): Promise<void> {
   }
 }
 
-export function onNewMessage(callback: (msg: any) => void): void {
+export function onNewMessage(callback: (msg: any, type: string) => void): void {
   messageCallbacks.push(callback)
 }
 

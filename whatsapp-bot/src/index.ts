@@ -29,7 +29,8 @@ async function main() {
   })
 
   // Register message handler (persists across reconnections)
-  onNewMessage((msg) => {
+  // type: 'notify' = real-time, 'append' = pushed from phone, 'history' = history sync
+  onNewMessage((msg, type) => {
     try {
       const chatJid = msg.key.remoteJid
       if (!chatJid) return
@@ -39,22 +40,25 @@ async function main() {
         msg.message?.extendedTextMessage?.text ||
         null
 
-      console.log(`[Message] from=${msg.key.fromMe ? 'me' : (msg.pushName || 'unknown')} chat=${chatJid.slice(0, 20)} content=${content?.slice(0, 50) || '(media)'}`)
+      // Only log real-time messages in detail (history can be noisy)
+      if (type === 'notify') {
+        console.log(`[Message] from=${msg.key.fromMe ? 'me' : (msg.pushName || 'unknown')} chat=${chatJid.slice(0, 20)} content=${content?.slice(0, 50) || '(media)'}`)
+      }
 
       // Cache DM contact names from pushName
       if (msg.pushName && chatJid.endsWith('@s.whatsapp.net') && !msg.key.fromMe) {
         setChatName(chatJid, msg.pushName)
       }
 
-      // Handle bot commands (from any chat)
-      if (content && isCommand(content)) {
+      // Handle bot commands ONLY from real-time messages (not history)
+      if (type === 'notify' && content && isCommand(content)) {
         console.log(`[Command] Detected: "${content}" from ${chatJid}`)
         const senderJid = msg.key.participant || msg.key.remoteJid || ''
         handleCommand(chatJid, content, senderJid, msg.key.fromMe === true)
         return
       }
 
-      // Store messages from monitored chats
+      // Store messages from monitored chats (all types: real-time + history)
       if (config.monitoredChats.length === 0 || config.monitoredChats.includes(chatJid)) {
         storeIncomingMessage(msg)
       }
