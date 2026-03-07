@@ -295,7 +295,7 @@ function resolveChat(name: string): { jid: string; chatName: string } | string {
 
 // --- Rich item formatting ---
 
-function formatItemsRich(items: any[], header: string): string {
+export function formatItemsRich(items: any[], header: string): string {
   const high = items.filter((i: any) => i.priority === 'high')
   const medium = items.filter((i: any) => i.priority === 'medium')
   const low = items.filter((i: any) => i.priority === 'low')

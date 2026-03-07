@@ -1,6 +1,7 @@
 import { getSocket } from './connection'
 import { loadConfig } from './config'
 import { getUnnotifiedItems, markItemsNotified } from './storage'
+import { formatItemsRich } from './commands'
 
 export async function notifyHaley(): Promise<number> {
   const config = loadConfig()
@@ -21,41 +22,8 @@ export async function notifyHaley(): Promise<number> {
 
   console.log(`[Notifier] Sending ${items.length} notification(s) to Haley...`)
 
-  // Group items by priority for a single digest message
-  const high = items.filter((i: any) => i.priority === 'high')
-  const medium = items.filter((i: any) => i.priority === 'medium')
-  const low = items.filter((i: any) => i.priority === 'low')
-
-  const lines: string[] = []
-  lines.push(`*KIT Bot — ${items.length} new item(s)*\n`)
-
-  if (high.length > 0) {
-    lines.push(`*HIGH PRIORITY:*`)
-    for (const item of high) {
-      lines.push(`  - ${formatItem(item)}`)
-    }
-    lines.push('')
-  }
-
-  if (medium.length > 0) {
-    lines.push(`*Medium:*`)
-    for (const item of medium) {
-      lines.push(`  - ${formatItem(item)}`)
-    }
-    lines.push('')
-  }
-
-  if (low.length > 0) {
-    lines.push(`Low:`)
-    for (const item of low) {
-      lines.push(`  - ${formatItem(item)}`)
-    }
-    lines.push('')
-  }
-
-  lines.push(`_Reply !status to see all pending items_`)
-
-  const message = lines.join('\n')
+  const header = `📋 *KIT Bot — ${items.length} new item(s)*\n\n━━━━━━━━━━━━━━━━━━━`
+  const message = formatItemsRich(items, header) + '\n\n_Reply !status to see all pending items_'
 
   try {
     await sock.sendMessage(config.haleyWhatsAppJid, { text: message })
@@ -83,13 +51,4 @@ export async function sendDirectMessage(jid: string, text: string): Promise<bool
     console.error(`[Notifier] Failed to send message to ${jid}:`, err)
     return false
   }
-}
-
-function formatItem(item: any): string {
-  const type = item.item_type.replace('_', ' ')
-  let line = `[${type}] ${item.title}`
-  if (item.due_date) {
-    line += ` (due: ${item.due_date})`
-  }
-  return line
 }
