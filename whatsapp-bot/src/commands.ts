@@ -330,7 +330,7 @@ async function replyChats(chatJid: string) {
   for (let i = 0; i < Math.min(conversations.length, 50); i++) {
     const c = conversations[i]
     const type = c.isGroup ? 'GRP' : 'DM'
-    const name = c.name || c.id.split('@')[0]
+    const name = c.name || getChatName(c.id)
     const mon = monitored.has(c.id) ? ' ✅' : ''
     lines.push(`${i + 1}. [${type}] ${name}${mon}\n   ${c.id}`)
   }

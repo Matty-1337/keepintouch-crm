@@ -34,6 +34,10 @@ let pairingCodeRequested = false
 const MAX_RECONNECT_ATTEMPTS = 20
 const MAX_BACKOFF_MS = 60000
 
+// Persistent callbacks — survive socket reconnections
+const messageCallbacks: Array<(msg: any) => void> = []
+const socketReadyCallbacks: Array<(sock: WASocket) => void> = []
+
 export function getUptime(): number {
   return lastConnectedAt ? Math.floor((Date.now() - lastConnectedAt) / 1000) : 0
 }
@@ -53,6 +57,22 @@ export async function connectToWhatsApp(): Promise<WASocket> {
   })
 
   sock.ev.on('creds.update', saveCreds)
+
+  // Re-register persistent message handler on every new socket
+  sock.ev.on('messages.upsert', ({ messages, type }) => {
+    if (type !== 'notify') return
+    for (const msg of messages) {
+      if (!msg.message) continue
+      for (const cb of messageCallbacks) {
+        cb(msg)
+      }
+    }
+  })
+
+  // Fire socket-ready callbacks (for contact listeners, etc.)
+  for (const cb of socketReadyCallbacks) {
+    cb(sock)
+  }
 
   // Pairing code support for headless (Railway)
   const usePairingCode = process.env.USE_PAIRING_CODE === 'true'
@@ -121,10 +141,11 @@ export async function connectToWhatsApp(): Promise<WASocket> {
         }, 5 * 60 * 1000)
       }
     } else if (connection === 'open') {
+      const wasReconnect = reconnectAttempts > 0
       reconnectAttempts = 0
       disconnectedSince = null
       lastConnectedAt = lastConnectedAt || Date.now()
-      console.log('WhatsApp connection established successfully.')
+      console.log(`WhatsApp connection established successfully.${wasReconnect ? ' (reconnected — handlers preserved)' : ''}`)
     }
   })
 
@@ -145,13 +166,11 @@ export async function closeSocket(): Promise<void> {
 }
 
 export function onNewMessage(callback: (msg: any) => void): void {
-  if (!sock) throw new Error('Not connected to WhatsApp')
+  messageCallbacks.push(callback)
+}
 
-  sock.ev.on('messages.upsert', ({ messages, type }) => {
-    if (type !== 'notify') return
-    for (const msg of messages) {
-      if (!msg.message) continue
-      callback(msg)
-    }
-  })
+export function onSocketCreated(callback: (sock: WASocket) => void): void {
+  socketReadyCallbacks.push(callback)
+  // If socket already exists, fire immediately
+  if (sock) callback(sock)
 }

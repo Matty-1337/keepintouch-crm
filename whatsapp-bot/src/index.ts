@@ -1,5 +1,5 @@
 import cron from 'node-cron'
-import { connectToWhatsApp, onNewMessage, closeSocket } from './connection'
+import { connectToWhatsApp, onNewMessage, onSocketCreated, closeSocket } from './connection'
 import { loadConfig } from './config'
 import { getDb, closeDb } from './storage'
 import { scanMonitoredChats, storeIncomingMessage } from './scanner'
@@ -19,12 +19,52 @@ async function main() {
   getDb()
   console.log('Database initialized.')
 
-  // Connect to WhatsApp
-  const sock = await connectToWhatsApp()
+  // Register persistent callbacks BEFORE connecting
+  // These survive socket reconnections automatically
 
-  // Register contact listeners BEFORE connection opens
-  // so we catch contacts.upsert events during initial sync
-  registerContactListeners()
+  // Re-register contact listeners on every new socket
+  onSocketCreated((s) => {
+    registerContactListeners()
+    console.log('[Connection] Socket created — contact listeners registered.')
+  })
+
+  // Register message handler (persists across reconnections)
+  onNewMessage((msg) => {
+    try {
+      const chatJid = msg.key.remoteJid
+      if (!chatJid) return
+
+      const content =
+        msg.message?.conversation ||
+        msg.message?.extendedTextMessage?.text ||
+        null
+
+      console.log(`[Message] from=${msg.key.fromMe ? 'me' : (msg.pushName || 'unknown')} chat=${chatJid.slice(0, 20)} content=${content?.slice(0, 50) || '(media)'}`)
+
+      // Cache DM contact names from pushName
+      if (msg.pushName && chatJid.endsWith('@s.whatsapp.net') && !msg.key.fromMe) {
+        setChatName(chatJid, msg.pushName)
+      }
+
+      // Handle bot commands (from any chat)
+      if (content && isCommand(content)) {
+        console.log(`[Command] Detected: "${content}" from ${chatJid}`)
+        const senderJid = msg.key.participant || msg.key.remoteJid || ''
+        handleCommand(chatJid, content, senderJid, msg.key.fromMe === true)
+        return
+      }
+
+      // Store messages from monitored chats
+      if (config.monitoredChats.length === 0 || config.monitoredChats.includes(chatJid)) {
+        storeIncomingMessage(msg)
+      }
+    } catch (err) {
+      console.error('[Message] Error processing message:', err)
+    }
+  })
+
+  // Connect to WhatsApp (creates first socket, triggers callbacks above)
+  const sock = await connectToWhatsApp()
 
   // Wait for connection
   await new Promise<void>((resolve) => {
@@ -40,38 +80,6 @@ async function main() {
 
   // Test Project Ops connection
   await testProjectOpsConnection()
-
-  // Listen for all incoming messages
-  onNewMessage((msg) => {
-    try {
-      const chatJid = msg.key.remoteJid
-      if (!chatJid) return
-
-      // Cache DM contact names from pushName
-      if (msg.pushName && chatJid.endsWith('@s.whatsapp.net') && !msg.key.fromMe) {
-        setChatName(chatJid, msg.pushName)
-      }
-
-      const content =
-        msg.message?.conversation ||
-        msg.message?.extendedTextMessage?.text ||
-        null
-
-      // Handle bot commands (from any chat)
-      if (content && isCommand(content)) {
-        const senderJid = msg.key.participant || msg.key.remoteJid || ''
-        handleCommand(chatJid, content, senderJid, msg.key.fromMe === true)
-        return
-      }
-
-      // Store messages from monitored chats
-      if (config.monitoredChats.length === 0 || config.monitoredChats.includes(chatJid)) {
-        storeIncomingMessage(msg)
-      }
-    } catch (err) {
-      console.error('[Message] Error processing message:', err)
-    }
-  })
 
   // Schedule periodic scans
   const interval = config.scanIntervalMinutes
