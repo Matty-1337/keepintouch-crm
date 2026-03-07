@@ -18,6 +18,18 @@ mkdir -p "$AUTH_DIR" "$DB_DIR"
 
 echo "[entrypoint] AUTH_DIR=$AUTH_DIR"
 echo "[entrypoint] DB_PATH=$DB_PATH"
+
+# Import seed messages on first run (if seed file exists and marker doesn't)
+SEED_MARKER="$DB_DIR/.seed-imported"
+if [ -f /app/seed-messages.sql ] && [ ! -f "$SEED_MARKER" ]; then
+  echo "[entrypoint] Importing seed messages into database..."
+  # Ensure DB exists with schema first
+  node -e "require('./dist/storage').getDb(); require('./dist/storage').closeDb();"
+  sqlite3 "$DB_PATH" < /app/seed-messages.sql
+  echo "[entrypoint] Seed import complete: $(sqlite3 "$DB_PATH" 'SELECT COUNT(*) FROM messages') messages in DB"
+  touch "$SEED_MARKER"
+fi
+
 echo "[entrypoint] Checking dist/index.js..."
 ls -la /app/dist/index.js 2>&1 || echo "[entrypoint] ERROR: dist/index.js not found!"
 echo "[entrypoint] Launching node dist/index.js..."
